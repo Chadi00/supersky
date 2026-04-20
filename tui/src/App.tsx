@@ -175,7 +175,13 @@ export function App() {
           <box flexGrow={1} flexDirection="column" justifyContent="center" alignItems="center" paddingBottom={2}>
             <box flexDirection="column" alignItems="center" gap={0} marginBottom={1}>
               <box height={7} justifyContent="center" alignItems="center">
-                <ascii-font font="block" text="supersky" color="#d0d0d0" />
+                <box flexDirection="column" alignItems="center" gap={0}>
+                  <text fg="#d0d0d0"> ___ _   _ _ __   ___ _ __ ___| | ___   _</text>
+                  <text fg="#d0d0d0">/ __| | | | '_ \ / _ \ '__/ __| |/ / | | |</text>
+                  <text fg="#d0d0d0">\__ \ |_| | |_) |  __/ |  \__ \   &lt;| |_| |</text>
+                  <text fg="#d0d0d0">|___/\__,_| .__/ \___|_|  |___/_|\_\\__, |</text>
+                  <text fg="#d0d0d0">          |_|                       |___/ </text>
+                </box>
               </box>
             </box>
 
