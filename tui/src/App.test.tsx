@@ -49,8 +49,16 @@ async function settleScrollLayout(setup: TestSetup) {
   })
 }
 
-function isScrollbarVisible(scrollbox: any) {
-  return !scrollbox.verticalScrollBar.slider.foregroundColor.equals(scrollbox.verticalScrollBar.slider.backgroundColor)
+function areScrollbarsHidden(scrollbox: any) {
+  return !scrollbox.verticalScrollBar.visible && !scrollbox.horizontalScrollBar.visible
+}
+
+function isSidebarVisible(setup: TestSetup) {
+  const appShell = setup.renderer.root.getChildren()[0]!
+  const body = appShell.getChildren()[0]!
+  const sessionLayout = body.getChildren()[0]!
+
+  return sessionLayout.getChildren().length > 1
 }
 
 afterEach(async () => {
@@ -166,7 +174,31 @@ test("sending a multiline message does not add an extra blank line", async () =>
   expect(linesAfterMessage).toContain("==== OpenTUI Task Complete ====")
 })
 
-test("settles the message scrollbar to the real viewport height", async () => {
+test("shows the sidebar in-session on wide terminals", async () => {
+  testSetup = await testRender(<App />, { width: 110, height: 30 })
+
+  await act(async () => {
+    await testSetup!.renderOnce()
+  })
+  await sendMessages(testSetup!, 1)
+
+  expect(isSidebarVisible(testSetup!)).toBe(true)
+})
+
+test("keeps the scrollbar hidden when the in-session view first appears without overflow", async () => {
+  testSetup = await testRender(<App />, { width: 110, height: 30 })
+
+  await act(async () => {
+    await testSetup!.renderOnce()
+  })
+  await sendMessages(testSetup!, 1)
+
+  const scrollbox = findScrollbox(testSetup.renderer.root)
+
+  expect(areScrollbarsHidden(scrollbox)).toBe(true)
+})
+
+test("keeps the scrollbars hidden after the message list overflows", async () => {
   testSetup = await testRender(<App />, { width: 110, height: 30 })
 
   await act(async () => {
@@ -177,32 +209,21 @@ test("settles the message scrollbar to the real viewport height", async () => {
 
   const scrollbox = findScrollbox(testSetup.renderer.root)
 
-  expect(scrollbox).not.toBeNull()
-  expect(scrollbox.verticalScrollBar.slider._viewPortSize).toBe(scrollbox.viewport.height)
+  expect(areScrollbarsHidden(scrollbox)).toBe(true)
 })
 
-test("only shows the scrollbar once the message list overflows", async () => {
-  testSetup = await testRender(<App />, { width: 110, height: 30 })
+test("hides the sidebar on narrow terminals", async () => {
+  testSetup = await testRender(<App />, { width: 70, height: 30 })
 
   await act(async () => {
     await testSetup!.renderOnce()
   })
   await sendMessages(testSetup!, 1)
-  await settleScrollLayout(testSetup!)
 
-  let scrollbox = findScrollbox(testSetup.renderer.root)
-
-  expect(isScrollbarVisible(scrollbox)).toBe(false)
-
-  await sendMessages(testSetup!, 3, 1)
-  await settleScrollLayout(testSetup!)
-
-  scrollbox = findScrollbox(testSetup.renderer.root)
-
-  expect(isScrollbarVisible(scrollbox)).toBe(true)
+  expect(isSidebarVisible(testSetup!)).toBe(false)
 })
 
-test("keeps the message panel geometry stable when overflow starts", async () => {
+test("keeps the footer anchored as messages overflow", async () => {
   testSetup = await testRender(<App />, { width: 110, height: 30 })
 
   await act(async () => {
@@ -214,14 +235,9 @@ test("keeps the message panel geometry stable when overflow starts", async () =>
   const appShell = testSetup.renderer.root.getChildren()[0]!
   const initialBody = appShell.getChildren()[0]!
   const initialFooter = appShell.getChildren()[1]!
-  let scrollbox = findScrollbox(testSetup.renderer.root)
+  const initialScrollbox = findScrollbox(testSetup.renderer.root)
   const initialGeometry = {
-    x: scrollbox.x,
-    y: scrollbox.y,
-    width: scrollbox.width,
-    height: scrollbox.height,
-    viewportWidth: scrollbox.viewport.width,
-    viewportHeight: scrollbox.viewport.height,
+    x: initialScrollbox.x,
     footerY: initialFooter.y,
     footerHeight: initialFooter.height,
     bodyHeight: initialBody.height,
@@ -230,16 +246,12 @@ test("keeps the message panel geometry stable when overflow starts", async () =>
   await sendMessages(testSetup!, 3, 1)
   await settleScrollLayout(testSetup!)
 
-  scrollbox = findScrollbox(testSetup.renderer.root)
+  const settledScrollbox = findScrollbox(testSetup.renderer.root)
   const settledBody = appShell.getChildren()[0]!
   const settledFooter = appShell.getChildren()[1]!
 
-  expect(scrollbox.x).toBe(initialGeometry.x)
-  expect(scrollbox.y).toBe(initialGeometry.y)
-  expect(scrollbox.width).toBe(initialGeometry.width)
-  expect(scrollbox.height).toBe(initialGeometry.height)
-  expect(scrollbox.viewport.width).toBe(initialGeometry.viewportWidth)
-  expect(scrollbox.viewport.height).toBe(initialGeometry.viewportHeight)
+  expect(isSidebarVisible(testSetup!)).toBe(true)
+  expect(settledScrollbox.x).toBe(initialGeometry.x)
   expect(settledFooter.y).toBe(initialGeometry.footerY)
   expect(settledFooter.height).toBe(initialGeometry.footerHeight)
   expect(settledBody.height).toBe(initialGeometry.bodyHeight)

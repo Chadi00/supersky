@@ -1,6 +1,6 @@
 import type { KeyBinding, ScrollBoxRenderable, TextareaRenderable } from "@opentui/core"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
-import { useCallback, useEffect, useId, useRef, useState } from "react"
+import { useCallback, useId, useRef, useState } from "react"
 
 const BG = "#000000"
 const PANEL = "#111111"
@@ -22,15 +22,6 @@ const BLUE = "#7cc6ff"
 const AMBER = "#fbbf24"
 const WHITE = "#e8e8e8"
 const USER_MESSAGE_BG = "#1b1b1b"
-const MESSAGE_SCROLLBAR_TRACK_BG = "#1a1a1a"
-const MESSAGE_SCROLLBAR_VISIBLE_TRACK = {
-  foregroundColor: WHITE,
-  backgroundColor: MESSAGE_SCROLLBAR_TRACK_BG,
-}
-const MESSAGE_SCROLLBAR_HIDDEN_TRACK = {
-  foregroundColor: BG,
-  backgroundColor: BG,
-}
 const EXIT_MESSAGE = "exit"
 
 export const appLifecycle = {
@@ -47,11 +38,6 @@ const PROJECT_LINE = "~/projects/supersky:main"
 type SessionMessage =
   | { id: string; role: "user"; content: string; timestamp: string }
   | { id: string; role: "assistant" }
-
-type ScrollbarSliderViewportSync = {
-  _viewPortSize: number
-  requestRender: () => void
-}
 
 function formatMessageTimestamp(date: Date) {
   return date.toLocaleTimeString("en-US", {
@@ -202,7 +188,6 @@ export function App() {
   const [draft, setDraft] = useState("")
   const [composerResetToken, setComposerResetToken] = useState(0)
   const listId = useId()
-  const messagesScrollRef = useRef<ScrollBoxRenderable | null>(null)
 
   const isNewSession = messages.length === 0
   const compact = width < 56
@@ -211,55 +196,14 @@ export function App() {
 
   const composerWelcomeWidth = Math.min(72, Math.max(36, Math.floor(width * 0.48)))
 
-  const syncMessagesScrollbar = useCallback((node: ScrollBoxRenderable | null) => {
+  const setMessagesScrollRef = useCallback((node: ScrollBoxRenderable | null) => {
     if (!node) {
       return
     }
 
-    const needsVerticalScrollbar = node.content.height > node.viewport.height
-    node.verticalScrollBar.visible = true
-    node.verticalScrollBar.trackOptions = needsVerticalScrollbar
-      ? MESSAGE_SCROLLBAR_VISIBLE_TRACK
-      : MESSAGE_SCROLLBAR_HIDDEN_TRACK
-
-    const viewportHeight = Math.max(1, node.viewport.height)
-    const slider = node.verticalScrollBar.slider as unknown as ScrollbarSliderViewportSync
-
-    // OpenTUI currently clamps slider.viewPortSize to the scroll range, which makes
-    // the thumb shrink non-linearly as message content grows. Sync the real visible
-    // viewport height directly so the thumb stays proportional to the content.
-    if (slider._viewPortSize !== viewportHeight) {
-      slider._viewPortSize = viewportHeight
-      slider.requestRender()
-    }
+    node.verticalScrollBar.visible = false
+    node.horizontalScrollBar.visible = false
   }, [])
-
-  const scheduleMessagesScrollbarSync = useCallback((node: ScrollBoxRenderable | null) => {
-    if (!node) {
-      return () => {}
-    }
-
-    const timers = [0, 5, 10, 20].map((delay) =>
-      setTimeout(() => {
-        if (messagesScrollRef.current === node) {
-          syncMessagesScrollbar(node)
-        }
-      }, delay),
-    )
-
-    return () => {
-      timers.forEach(clearTimeout)
-    }
-  }, [syncMessagesScrollbar])
-
-  const setMessagesScrollRef = useCallback((node: ScrollBoxRenderable | null) => {
-    messagesScrollRef.current = node
-    syncMessagesScrollbar(node)
-  }, [syncMessagesScrollbar])
-
-  useEffect(() => {
-    return scheduleMessagesScrollbarSync(messagesScrollRef.current)
-  }, [draft, messages.length, scheduleMessagesScrollbarSync, showSidebar, width])
 
   const quitApp = useCallback(() => {
     if (!renderer.isDestroyed) {
@@ -348,9 +292,9 @@ export function App() {
                   wrapperOptions: { backgroundColor: BG },
                   viewportOptions: { backgroundColor: BG },
                   contentOptions: { backgroundColor: BG },
-                  scrollbarOptions: {
-                    trackOptions: MESSAGE_SCROLLBAR_HIDDEN_TRACK,
-                  },
+                  scrollbarOptions: { visible: false },
+                  verticalScrollbarOptions: { visible: false },
+                  horizontalScrollbarOptions: { visible: false },
                 }}
               >
                 <box flexDirection="column" padding={1} gap={0}>
