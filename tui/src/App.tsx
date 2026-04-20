@@ -37,6 +37,22 @@ type ComposerProps = {
 function Composer({ width, draft, resetToken, onDraftChange, onSubmit, focused, minHeight = COMPOSER_MIN_HEIGHT }: ComposerProps) {
   const textareaRef = useRef<TextareaRenderable | null>(null)
 
+  useKeyboard((key) => {
+    const isEnter = key.name === "enter" || key.name === "return"
+
+    if (!focused || !isEnter || key.ctrl || key.meta || key.super || key.hyper || key.repeated) {
+      return
+    }
+
+    // Some terminals report Shift+Enter as return+shift, while others emit linefeed.
+    if (key.shift) {
+      textareaRef.current?.newLine()
+      return
+    }
+
+    textareaRef.current?.submit()
+  })
+
   return (
     <box flexDirection="column" width={width} maxWidth="100%" gap={0}>
       <box flexDirection="row" width="100%" minHeight={minHeight} alignItems="stretch">
@@ -67,7 +83,7 @@ function Composer({ width, draft, resetToken, onDraftChange, onSubmit, focused, 
             onContentChange={() => onDraftChange(textareaRef.current?.plainText ?? "")}
             onSubmit={() => {
               const submitted = textareaRef.current?.plainText ?? draft
-              setTimeout(() => setTimeout(() => onSubmit(submitted), 0), 0)
+              onSubmit(submitted)
             }}
           />
         </box>

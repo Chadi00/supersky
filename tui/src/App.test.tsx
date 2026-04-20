@@ -40,3 +40,37 @@ test("preserves rapid composer typing without resetting the draft", async () => 
 
   expect(frame).toContain("fast typing should stay stable")
 })
+
+test("submits the composer with enter", async () => {
+  testSetup = await testRender(<App />, { width: 110, height: 30 })
+
+  await act(async () => {
+    await testSetup!.renderOnce()
+    await testSetup!.mockInput.typeText("send on enter")
+    testSetup!.mockInput.pressKey("RETURN")
+    await testSetup!.renderOnce()
+  })
+
+  const frame = testSetup.captureCharFrame()
+
+  expect(frame).toContain("You")
+  expect(frame).toContain("send on enter")
+})
+
+test("inserts a newline for multiline enter", async () => {
+  testSetup = await testRender(<App />, { width: 110, height: 30 })
+
+  await act(async () => {
+    await testSetup!.renderOnce()
+    await testSetup!.mockInput.typeText("line one")
+    testSetup!.mockInput.pressKey("LINEFEED")
+    await testSetup!.mockInput.typeText("line two")
+    await testSetup!.renderOnce()
+  })
+
+  const frame = testSetup.captureCharFrame()
+
+  expect(frame).not.toContain("You")
+  expect(frame).toContain("line one")
+  expect(frame).toContain("line two")
+})
