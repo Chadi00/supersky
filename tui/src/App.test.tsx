@@ -53,10 +53,12 @@ test("submits the composer with enter", async () => {
 
   const frame = testSetup.captureCharFrame()
   const occurrences = frame.match(/send on enter/g)?.length ?? 0
+  const timestampMatch = frame.match(/\b\d{1,2}:\d{2}:\d{2} (AM|PM)\b/)
 
-  expect(frame).toContain("You")
+  expect(frame).toContain("Assistant")
   expect(frame).toContain("send on enter")
   expect(occurrences).toBe(1)
+  expect(timestampMatch).not.toBeNull()
 })
 
 test("inserts a newline for multiline enter", async () => {
@@ -92,8 +94,11 @@ test("sending a multiline message does not add an extra blank line", async () =>
   const frame = testSetup.captureCharFrame()
   const lines = frame.split("\n")
   const lineTwoIndex = lines.findIndex((line) => line.includes("line two"))
+  const timestampPattern = /\b\d{1,2}:\d{2}:\d{2} (AM|PM)\b/
+  const linesAfterMessage = lines.slice(lineTwoIndex + 1, lineTwoIndex + 7).join("\n")
 
   expect(lineTwoIndex).toBeGreaterThan(-1)
-  expect(lines[lineTwoIndex + 1]?.trim()).toBe("")
-  expect(lines[lineTwoIndex + 2]).toContain("==== OpenTUI Task Complete ====")
+  expect(lines[lineTwoIndex + 1]?.trim()).toMatch(timestampPattern)
+  expect(linesAfterMessage).toContain("Assistant")
+  expect(linesAfterMessage).toContain("==== OpenTUI Task Complete ====")
 })

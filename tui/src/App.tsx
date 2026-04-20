@@ -1,4 +1,4 @@
-import type { TextareaRenderable } from "@opentui/core"
+import type { KeyBinding, TextareaRenderable } from "@opentui/core"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { useCallback, useId, useRef, useState } from "react"
 
@@ -8,11 +8,11 @@ const COMPOSER_BG = "#141414"
 const COMPOSER_MIN_HEIGHT = 3
 const COMPOSER_MAX_TEXT_LINES = 4
 const COMPOSER_VERTICAL_PADDING = 1
-const COMPOSER_KEY_BINDINGS = [
+const COMPOSER_KEY_BINDINGS: KeyBinding[] = [
   { name: "return", action: "submit" },
   { name: "return", shift: true, action: "newline" },
   { name: "linefeed", action: "newline" },
-] as const
+]
 const ACCENT = "#4a9eff"
 const MUTED = "#5a5a5a"
 const DIM = "#8a8a8a"
@@ -21,13 +21,25 @@ const PINK = "#f472b6"
 const BLUE = "#7cc6ff"
 const AMBER = "#fbbf24"
 const WHITE = "#e8e8e8"
+const USER_MESSAGE_BG = "#1b1b1b"
 
 const TUI_VERSION = "0.1.0"
 const MODEL_NAME = "GPT-5.4 OpenAI"
 const MODEL_QUALITY = "high"
 const PROJECT_LINE = "~/projects/supersky:main"
 
-type SessionTurn = { id: string; user: string }
+type SessionMessage =
+  | { id: string; role: "user"; content: string; timestamp: string }
+  | { id: string; role: "assistant" }
+
+function formatMessageTimestamp(date: Date) {
+  return date.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true,
+  })
+}
 
 type ComposerProps = {
   width: number | `${number}%`
@@ -165,12 +177,12 @@ function Sidebar({ showModified }: { showModified: boolean }) {
 export function App() {
   const renderer = useRenderer()
   const { width } = useTerminalDimensions()
-  const [turns, setTurns] = useState<SessionTurn[]>([])
+  const [messages, setMessages] = useState<SessionMessage[]>([])
   const [draft, setDraft] = useState("")
   const [composerResetToken, setComposerResetToken] = useState(0)
   const listId = useId()
 
-  const isNewSession = turns.length === 0
+  const isNewSession = messages.length === 0
   const compact = width < 56
   const showSidebar = !compact && width >= 72 && !isNewSession
   const sidebarWidth = showSidebar ? Math.min(34, Math.floor(width * 0.26)) : 0
@@ -183,7 +195,13 @@ export function App() {
       if (!text) {
         return
       }
-      setTurns((prev) => [...prev, { id: `${listId}-${prev.length}`, user: text }])
+      const timestamp = formatMessageTimestamp(new Date())
+
+      setMessages((prev) => [
+        ...prev,
+        { id: `${listId}-${prev.length}`, role: "user", content: text, timestamp },
+        { id: `${listId}-${prev.length + 1}`, role: "assistant" },
+      ])
       setDraft("")
       setComposerResetToken((value) => value + 1)
     },
@@ -197,7 +215,7 @@ export function App() {
     }
 
     if (key.ctrl && key.name === "n") {
-      setTurns([])
+      setMessages([])
       setDraft("")
       setComposerResetToken((value) => value + 1)
     }
@@ -249,15 +267,21 @@ export function App() {
                 }}
               >
                 <box flexDirection="column" padding={1} gap={0}>
-                  {turns.map((t) => (
-                    <box key={t.id} flexDirection="column" marginBottom={1}>
-                      <text fg={BLUE}>You</text>
-                      <text fg={WHITE}>{t.user}</text>
-                      <box marginTop={1}>
+                  {messages.map((message) =>
+                    message.role === "user" ? (
+                      <box key={message.id} flexDirection="column" marginBottom={1}>
+                        <box backgroundColor={USER_MESSAGE_BG} paddingX={1} paddingY={1} flexDirection="column" gap={0}>
+                          <text fg={WHITE}>{message.content}</text>
+                          <text fg={DIM}>{message.timestamp}</text>
+                        </box>
+                      </box>
+                    ) : (
+                      <box key={message.id} flexDirection="column" marginBottom={1}>
+                        <text fg={GREEN}>Assistant</text>
                         <AssistantDemoOutput />
                       </box>
-                    </box>
-                  ))}
+                    ),
+                  )}
                 </box>
               </scrollbox>
 
