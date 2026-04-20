@@ -232,7 +232,7 @@ export function App() {
           </box>
         ) : (
           <box flexGrow={1} flexDirection={showSidebar ? "row" : "column"} alignItems="stretch" paddingX={1} gap={1} minHeight={0}>
-            <box flexGrow={1} height="100%" flexDirection="column" minHeight={0} minWidth={0}>
+            <box flexGrow={1} height="100%" flexDirection="column" minHeight={0} minWidth={0} marginTop={showSidebar ? 1 : 0}>
               <scrollbox
                 flexGrow={1}
                 focused={false}
@@ -274,7 +274,7 @@ export function App() {
             </box>
 
             {showSidebar && (
-              <box width={sidebarWidth} height="100%" flexShrink={0} minHeight={0}>
+              <box width={sidebarWidth} height="100%" flexShrink={0} minHeight={0} marginTop={1}>
                 <Sidebar showModified />
               </box>
             )}
