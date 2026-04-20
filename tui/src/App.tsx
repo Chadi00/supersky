@@ -8,6 +8,11 @@ const COMPOSER_BG = "#141414"
 const COMPOSER_MIN_HEIGHT = 3
 const COMPOSER_MAX_TEXT_LINES = 4
 const COMPOSER_VERTICAL_PADDING = 1
+const COMPOSER_KEY_BINDINGS = [
+  { name: "return", action: "submit" },
+  { name: "return", shift: true, action: "newline" },
+  { name: "linefeed", action: "newline" },
+] as const
 const ACCENT = "#4a9eff"
 const MUTED = "#5a5a5a"
 const DIM = "#8a8a8a"
@@ -47,22 +52,6 @@ function Composer({
 }: ComposerProps) {
   const textareaRef = useRef<TextareaRenderable | null>(null)
 
-  useKeyboard((key) => {
-    const isEnter = key.name === "enter" || key.name === "return"
-
-    if (!focused || !isEnter || key.ctrl || key.meta || key.super || key.hyper || key.repeated) {
-      return
-    }
-
-    // Some terminals report Shift+Enter as return+shift, while others emit linefeed.
-    if (key.shift) {
-      textareaRef.current?.newLine()
-      return
-    }
-
-    textareaRef.current?.submit()
-  })
-
   return (
     <box flexDirection="column" width={width} maxWidth="100%" gap={0}>
       <box flexDirection="row" width="100%" minHeight={minHeight} alignItems="stretch">
@@ -90,9 +79,16 @@ function Composer({
             focusedBackgroundColor={COMPOSER_BG}
             focusedTextColor={WHITE}
             wrapMode="word"
+            keyBindings={COMPOSER_KEY_BINDINGS}
             onContentChange={() => onDraftChange(textareaRef.current?.plainText ?? "")}
             onSubmit={() => {
               const submitted = textareaRef.current?.plainText ?? draft
+              if (!submitted.trim()) {
+                return
+              }
+
+              textareaRef.current?.clear()
+              onDraftChange("")
               onSubmit(submitted)
             }}
           />
@@ -273,8 +269,6 @@ export function App() {
                   onDraftChange={setDraft}
                   onSubmit={submit}
                   focused
-                  minHeight={4}
-                  justifyContent="flex-end"
                 />
               </box>
             </box>
