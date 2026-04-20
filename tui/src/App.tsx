@@ -1,6 +1,6 @@
-import type { KeyBinding, TextareaRenderable } from "@opentui/core"
+import type { KeyBinding, ScrollBoxRenderable, TextareaRenderable } from "@opentui/core"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
-import { useCallback, useId, useRef, useState } from "react"
+import { useCallback, useEffect, useId, useRef, useState } from "react"
 
 const BG = "#000000"
 const PANEL = "#111111"
@@ -38,6 +38,11 @@ const PROJECT_LINE = "~/projects/supersky:main"
 type SessionMessage =
   | { id: string; role: "user"; content: string; timestamp: string }
   | { id: string; role: "assistant" }
+
+type ScrollbarSliderViewportSync = {
+  _viewPortSize: number
+  requestRender: () => void
+}
 
 function formatMessageTimestamp(date: Date) {
   return date.toLocaleTimeString("en-US", {
@@ -188,6 +193,7 @@ export function App() {
   const [draft, setDraft] = useState("")
   const [composerResetToken, setComposerResetToken] = useState(0)
   const listId = useId()
+  const messagesScrollRef = useRef<ScrollBoxRenderable | null>(null)
 
   const isNewSession = messages.length === 0
   const compact = width < 56
@@ -195,6 +201,52 @@ export function App() {
   const sidebarWidth = showSidebar ? Math.min(34, Math.floor(width * 0.26)) : 0
 
   const composerWelcomeWidth = Math.min(72, Math.max(36, Math.floor(width * 0.48)))
+
+  const syncMessagesScrollbar = useCallback((node: ScrollBoxRenderable | null) => {
+    if (!node) {
+      return
+    }
+
+    node.verticalScrollBar.visible = true
+
+    const viewportHeight = Math.max(1, node.viewport.height)
+    const slider = node.verticalScrollBar.slider as unknown as ScrollbarSliderViewportSync
+
+    // OpenTUI currently clamps slider.viewPortSize to the scroll range, which makes
+    // the thumb shrink non-linearly as message content grows. Sync the real visible
+    // viewport height directly so the thumb stays proportional to the content.
+    if (slider._viewPortSize !== viewportHeight) {
+      slider._viewPortSize = viewportHeight
+      slider.requestRender()
+    }
+  }, [])
+
+  const scheduleMessagesScrollbarSync = useCallback((node: ScrollBoxRenderable | null) => {
+    if (!node) {
+      return () => {}
+    }
+
+    const timers = [0, 5, 10, 20].map((delay) =>
+      setTimeout(() => {
+        if (messagesScrollRef.current === node) {
+          syncMessagesScrollbar(node)
+        }
+      }, delay),
+    )
+
+    return () => {
+      timers.forEach(clearTimeout)
+    }
+  }, [syncMessagesScrollbar])
+
+  const setMessagesScrollRef = useCallback((node: ScrollBoxRenderable | null) => {
+    messagesScrollRef.current = node
+    syncMessagesScrollbar(node)
+  }, [syncMessagesScrollbar])
+
+  useEffect(() => {
+    return scheduleMessagesScrollbarSync(messagesScrollRef.current)
+  }, [draft, messages.length, scheduleMessagesScrollbarSync, showSidebar, width])
 
   const quitApp = useCallback(() => {
     if (!renderer.isDestroyed) {
@@ -273,6 +325,7 @@ export function App() {
           <box flexGrow={1} flexDirection={showSidebar ? "row" : "column"} alignItems="stretch" paddingX={1} gap={1} minHeight={0}>
             <box flexGrow={1} height="100%" flexDirection="column" minHeight={0} minWidth={0} marginTop={showSidebar ? 1 : 0}>
               <scrollbox
+                ref={setMessagesScrollRef}
                 flexGrow={1}
                 focused={false}
                 stickyScroll

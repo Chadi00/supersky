@@ -5,6 +5,31 @@ import { App, appLifecycle } from "./App"
 
 let testSetup: Awaited<ReturnType<typeof testRender>> | undefined
 
+function findScrollbox(node: unknown): any {
+  if (!node || typeof node !== "object") {
+    return null
+  }
+
+  const renderable = node as {
+    constructor?: { name?: string }
+    getChildren?: () => unknown[]
+  }
+
+  if (renderable.constructor?.name === "ScrollBoxRenderable") {
+    return renderable
+  }
+
+  const children = typeof renderable.getChildren === "function" ? renderable.getChildren() : []
+  for (const child of children) {
+    const found = findScrollbox(child)
+    if (found) {
+      return found
+    }
+  }
+
+  return null
+}
+
 afterEach(async () => {
   if (testSetup) {
     await act(async () => {
@@ -116,4 +141,27 @@ test("sending a multiline message does not add an extra blank line", async () =>
   expect(lines[lineTwoIndex + 1]?.trim()).toMatch(timestampPattern)
   expect(linesAfterMessage).toContain("Assistant")
   expect(linesAfterMessage).toContain("==== OpenTUI Task Complete ====")
+})
+
+test("settles the message scrollbar to the real viewport height", async () => {
+  testSetup = await testRender(<App />, { width: 110, height: 30 })
+
+  await act(async () => {
+    await testSetup!.renderOnce()
+    for (let i = 0; i < 4; i++) {
+      await testSetup!.mockInput.typeText(`message ${i}`)
+      testSetup!.mockInput.pressKey("RETURN")
+      await testSetup!.renderOnce()
+    }
+  })
+
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    await testSetup!.renderOnce()
+  })
+
+  const scrollbox = findScrollbox(testSetup.renderer.root)
+
+  expect(scrollbox).not.toBeNull()
+  expect(scrollbox.verticalScrollBar.slider._viewPortSize).toBe(scrollbox.viewport.height)
 })
