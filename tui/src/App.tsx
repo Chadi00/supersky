@@ -1,10 +1,13 @@
+import type { TextareaRenderable } from "@opentui/core"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
-import { useCallback, useId, useState } from "react"
+import { useCallback, useId, useRef, useState } from "react"
 
 const BG = "#000000"
 const PANEL = "#111111"
 const COMPOSER_BG = "#141414"
-const COMPOSER_MIN_HEIGHT = 6
+const COMPOSER_MIN_HEIGHT = 3
+const COMPOSER_MAX_TEXT_LINES = 4
+const COMPOSER_VERTICAL_PADDING = 1
 const ACCENT = "#4a9eff"
 const MUTED = "#5a5a5a"
 const DIM = "#8a8a8a"
@@ -24,38 +27,48 @@ type SessionTurn = { id: string; user: string }
 type ComposerProps = {
   width: number | `${number}%`
   draft: string
+  resetToken: number
   onDraftChange: (value: string) => void
   onSubmit: (value: string) => void
   focused: boolean
+  minHeight?: number
 }
 
-function Composer({ width, draft, onDraftChange, onSubmit, focused }: ComposerProps) {
+function Composer({ width, draft, resetToken, onDraftChange, onSubmit, focused, minHeight = COMPOSER_MIN_HEIGHT }: ComposerProps) {
+  const textareaRef = useRef<TextareaRenderable | null>(null)
+
   return (
     <box flexDirection="column" width={width} maxWidth="100%" gap={0}>
-      <box flexDirection="row" width="100%" minHeight={COMPOSER_MIN_HEIGHT} alignItems="stretch">
-        <box width={1} backgroundColor={ACCENT} flexShrink={0} />
+      <box flexDirection="row" width="100%" minHeight={minHeight} alignItems="stretch">
         <box
           flexGrow={1}
           flexDirection="column"
           backgroundColor={COMPOSER_BG}
           paddingLeft={1}
           paddingRight={1}
-          paddingTop={1}
-          paddingBottom={1}
-          minHeight={COMPOSER_MIN_HEIGHT}
+          paddingTop={COMPOSER_VERTICAL_PADDING}
+          paddingBottom={COMPOSER_VERTICAL_PADDING}
+          minHeight={minHeight}
           justifyContent="center"
         >
-          <input
+          <textarea
+            key={resetToken}
+            ref={textareaRef}
             focused={focused}
-            placeholder="Ask anything... 'Fix a TODO in the codebase'"
             placeholderColor="#5a5a5a"
-            value={draft}
+            initialValue={draft}
+            minHeight={1}
+            maxHeight={COMPOSER_MAX_TEXT_LINES}
             backgroundColor={COMPOSER_BG}
             textColor={WHITE}
             focusedBackgroundColor={COMPOSER_BG}
             focusedTextColor={WHITE}
-            onChange={onDraftChange}
-            onSubmit={(value) => onSubmit(typeof value === "string" ? value : draft)}
+            wrapMode="word"
+            onContentChange={() => onDraftChange(textareaRef.current?.plainText ?? "")}
+            onSubmit={() => {
+              const submitted = textareaRef.current?.plainText ?? draft
+              setTimeout(() => setTimeout(() => onSubmit(submitted), 0), 0)
+            }}
           />
         </box>
       </box>
@@ -136,13 +149,15 @@ export function App() {
   const { width } = useTerminalDimensions()
   const [turns, setTurns] = useState<SessionTurn[]>([])
   const [draft, setDraft] = useState("")
+  const [composerResetToken, setComposerResetToken] = useState(0)
   const listId = useId()
 
   const isNewSession = turns.length === 0
   const compact = width < 56
   const showSidebar = !compact && width >= 72 && !isNewSession
+  const sidebarWidth = showSidebar ? Math.min(34, Math.floor(width * 0.26)) : 0
 
-  const composerWelcomeWidth = Math.min(88, Math.max(44, Math.floor(width * 0.58)))
+  const composerWelcomeWidth = Math.min(72, Math.max(36, Math.floor(width * 0.48)))
 
   const submit = useCallback(
     (raw: string) => {
@@ -152,6 +167,7 @@ export function App() {
       }
       setTurns((prev) => [...prev, { id: `${listId}-${prev.length}`, user: text }])
       setDraft("")
+      setComposerResetToken((value) => value + 1)
     },
     [listId],
   )
@@ -165,6 +181,7 @@ export function App() {
     if (key.ctrl && key.name === "n") {
       setTurns([])
       setDraft("")
+      setComposerResetToken((value) => value + 1)
     }
   })
 
@@ -188,9 +205,11 @@ export function App() {
             <Composer
               width={composerWelcomeWidth}
               draft={draft}
+              resetToken={composerResetToken}
               onDraftChange={setDraft}
               onSubmit={submit}
               focused
+              minHeight={3}
             />
           </box>
         ) : (
@@ -228,6 +247,7 @@ export function App() {
                 <Composer
                   width="100%"
                   draft={draft}
+                  resetToken={composerResetToken}
                   onDraftChange={setDraft}
                   onSubmit={submit}
                   focused

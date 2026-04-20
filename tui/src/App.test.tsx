@@ -5,8 +5,12 @@ import { App } from "./App"
 
 let testSetup: Awaited<ReturnType<typeof testRender>> | undefined
 
-afterEach(() => {
-  testSetup?.renderer.destroy()
+afterEach(async () => {
+  if (testSetup) {
+    await act(async () => {
+      testSetup?.renderer.destroy()
+    })
+  }
   testSetup = undefined
 })
 
@@ -20,5 +24,19 @@ test("renders the supersky TUI shell (new session)", async () => {
   const frame = testSetup.captureCharFrame()
 
   expect(frame).toContain("supersky")
-  expect(frame).toContain("Ask anything")
+  expect(frame).toContain("GPT-5.4 OpenAI")
+})
+
+test("preserves rapid composer typing without resetting the draft", async () => {
+  testSetup = await testRender(<App />, { width: 110, height: 30 })
+
+  await act(async () => {
+    await testSetup!.renderOnce()
+    await testSetup!.mockInput.typeText("fast typing should stay stable")
+    await testSetup!.renderOnce()
+  })
+
+  const frame = testSetup.captureCharFrame()
+
+  expect(frame).toContain("fast typing should stay stable")
 })
