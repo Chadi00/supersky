@@ -168,7 +168,7 @@ export async function submitText(setup: AppTestSetup, text: string) {
 
 export async function pressEnter(setup: AppTestSetup) {
   await runInput(setup, () => setup.mockInput.pressEnter(), {
-    renderPasses: 2,
+    renderPasses: 3,
   });
 }
 
@@ -223,6 +223,16 @@ export function findScrollbox(node: unknown): ScrollboxNode | null {
   return scrollbox as ScrollboxNode | null;
 }
 
+export function findRenderableByConstructorName(
+  node: unknown,
+  constructorName: string,
+) {
+  return findRenderable(
+    node,
+    (candidate) => candidate.constructor?.name === constructorName,
+  );
+}
+
 export function areScrollbarsHidden(scrollbox: ScrollboxNode | null) {
   return (
     scrollbox !== null &&
@@ -243,12 +253,26 @@ export function captureShellGeometry(root: unknown) {
   const appShell = expectGeometryNode(getChildren(root)[0], "app shell");
   const body = expectGeometryNode(appShell.getChildren()[0], "body");
   const footer = expectGeometryNode(appShell.getChildren()[1], "footer");
+  const sessionLayout = expectGeometryNode(
+    body.getChildren()[0],
+    "session layout",
+  );
+  const mainPanel = expectGeometryNode(
+    sessionLayout.getChildren()[0],
+    "main session panel",
+  );
+  const sidebarNode = sessionLayout.getChildren()[1];
   const scrollbox = expectGeometryNode(findScrollbox(root), "scrollbox");
+  const sidebar = sidebarNode
+    ? expectGeometryNode(sidebarNode, "session sidebar")
+    : null;
 
   return {
     scrollboxX: scrollbox.x,
     footerY: footer.y,
     footerHeight: footer.height,
     bodyHeight: body.height,
+    mainBottom: mainPanel.y + mainPanel.height,
+    sidebarBottom: sidebar ? sidebar.y + sidebar.height : null,
   };
 }

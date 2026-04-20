@@ -26,22 +26,7 @@ export function WelcomeScreen({
     >
       <box flexDirection="column" alignItems="center" gap={0} marginBottom={1}>
         <box height={7} justifyContent="center" alignItems="center">
-          <box flexDirection="column" alignItems="center" gap={0}>
-            <text fg={colors.bannerText}>
-              {" "}
-              ___ _ _ _ __ ___ _ __ ___| | ___ _
-            </text>
-            <text fg={colors.bannerText}>
-              / __| | | | '_ \ / _ \ '__/ __| |/ / | | |
-            </text>
-            <text fg={colors.bannerText}>
-              \__ \ |_| | |_) | __/ | \__ \ &lt;| |_| |
-            </text>
-            <text fg={colors.bannerText}>
-              |___/\__,_| .__/ \___|_| |___/_|\_\\__, |
-            </text>
-            <text fg={colors.bannerText}> |_| |___/ </text>
-          </box>
+          <ascii-font font="block" text="supersky" color={colors.bannerText} />
         </box>
       </box>
 

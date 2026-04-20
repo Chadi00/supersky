@@ -36,17 +36,12 @@ export function App() {
             flexDirection={layout.showSidebar ? "row" : "column"}
             alignItems="stretch"
             paddingX={1}
+            paddingTop={layout.showSidebar ? 1 : 0}
+            paddingBottom={1}
             gap={1}
             minHeight={0}
           >
-            <box
-              flexGrow={1}
-              height="100%"
-              flexDirection="column"
-              minHeight={0}
-              minWidth={0}
-              marginTop={layout.showSidebar ? 1 : 0}
-            >
+            <box flexGrow={1} flexDirection="column" minHeight={0} minWidth={0}>
               <MessageList messages={state.messages} />
 
               <box paddingTop={0} flexShrink={0}>
@@ -62,13 +57,7 @@ export function App() {
             </box>
 
             {layout.showSidebar ? (
-              <box
-                width={layout.sidebarWidth}
-                height="100%"
-                flexShrink={0}
-                minHeight={0}
-                marginTop={1}
-              >
+              <box width={layout.sidebarWidth} flexShrink={0} minHeight={0}>
                 <SessionSidebar />
               </box>
             ) : null}

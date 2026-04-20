@@ -1,7 +1,7 @@
 import { useKeyboard, useRenderer } from "@opentui/react";
 import { useCallback, useId, useReducer } from "react";
 
-import { destroyRenderer } from "../shared/lifecycle";
+import { destroyRendererAndExit } from "../shared/lifecycle";
 import { formatMessageTimestamp } from "../shared/time";
 import {
   isExitCommand,
@@ -20,7 +20,7 @@ export function useSessionController() {
   );
 
   const exitSession = useCallback(() => {
-    destroyRenderer(renderer);
+    destroyRendererAndExit(renderer);
   }, [renderer]);
 
   const resetSession = useCallback(() => {

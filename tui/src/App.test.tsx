@@ -1,7 +1,9 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
+import { appLifecycle } from "./shared/lifecycle";
 import {
   areScrollbarsHidden,
   captureShellGeometry,
+  findRenderableByConstructorName,
   findScrollbox,
   isSidebarVisible,
   pressCtrlC,
@@ -18,8 +20,13 @@ import {
 test("renders the supersky TUI shell (new session)", async () => {
   await withApp((setup) => {
     const frame = setup.captureCharFrame();
+    const banner = findRenderableByConstructorName(
+      setup.renderer.root,
+      "ASCIIFontRenderable",
+    );
 
-    expect(frame).toContain("supersky");
+    expect(banner).not.toBeNull();
+    expect(frame).not.toContain("___ _ _ _ __ ___ _ __ ___| | ___ _");
     expect(frame).toContain("GPT-5.4 OpenAI");
   });
 });
@@ -50,27 +57,60 @@ test("submits the composer with enter", async () => {
 });
 
 test("sending exit quits the app", async () => {
-  await withApp(async (setup) => {
-    await submitText(setup, "exit");
+  const requestProcessExit = spyOn(
+    appLifecycle,
+    "requestProcessExit",
+  ).mockImplementation(() => {});
 
-    expect(setup.renderer.isDestroyed).toBe(true);
-  });
+  try {
+    await withApp(async (setup) => {
+      await submitText(setup, "exit");
+      await Promise.resolve();
+
+      expect(setup.renderer.isDestroyed).toBe(true);
+      expect(requestProcessExit).toHaveBeenCalledTimes(1);
+    });
+  } finally {
+    requestProcessExit.mockRestore();
+  }
 });
 
 test("treats the exit command case-insensitively after trimming", async () => {
-  await withApp(async (setup) => {
-    await submitText(setup, "  ExIt  ");
+  const requestProcessExit = spyOn(
+    appLifecycle,
+    "requestProcessExit",
+  ).mockImplementation(() => {});
 
-    expect(setup.renderer.isDestroyed).toBe(true);
-  });
+  try {
+    await withApp(async (setup) => {
+      await submitText(setup, "  ExIt  ");
+      await Promise.resolve();
+
+      expect(setup.renderer.isDestroyed).toBe(true);
+      expect(requestProcessExit).toHaveBeenCalledTimes(1);
+    });
+  } finally {
+    requestProcessExit.mockRestore();
+  }
 });
 
 test("pressing ctrl+c quits the app", async () => {
-  await withApp(async (setup) => {
-    await pressCtrlC(setup);
+  const requestProcessExit = spyOn(
+    appLifecycle,
+    "requestProcessExit",
+  ).mockImplementation(() => {});
 
-    expect(setup.renderer.isDestroyed).toBe(true);
-  });
+  try {
+    await withApp(async (setup) => {
+      await pressCtrlC(setup);
+      await Promise.resolve();
+
+      expect(setup.renderer.isDestroyed).toBe(true);
+      expect(requestProcessExit).toHaveBeenCalledTimes(1);
+    });
+  } finally {
+    requestProcessExit.mockRestore();
+  }
 });
 
 test("ignores whitespace-only submissions", async () => {
@@ -193,5 +233,21 @@ test("keeps the footer anchored as messages overflow", async () => {
     expect(settledGeometry.footerY).toBe(initialGeometry.footerY);
     expect(settledGeometry.footerHeight).toBe(initialGeometry.footerHeight);
     expect(settledGeometry.bodyHeight).toBe(initialGeometry.bodyHeight);
+  });
+});
+
+test("keeps a bottom gap between the in-session panels and footer", async () => {
+  await withApp(async (setup) => {
+    await sendMessages(setup, 1);
+    await settleScrollLayout(setup);
+
+    const geometry = captureShellGeometry(setup.renderer.root);
+    const sidebarBottom = geometry.sidebarBottom;
+
+    expect(geometry.footerY - geometry.mainBottom).toBe(1);
+    if (sidebarBottom === null) {
+      throw new Error("Expected the sidebar to be visible");
+    }
+    expect(geometry.footerY - sidebarBottom).toBe(1);
   });
 });
