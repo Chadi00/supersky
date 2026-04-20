@@ -22,6 +22,13 @@ const BLUE = "#7cc6ff"
 const AMBER = "#fbbf24"
 const WHITE = "#e8e8e8"
 const USER_MESSAGE_BG = "#1b1b1b"
+const EXIT_MESSAGE = "exit"
+
+export const appLifecycle = {
+  requestProcessExit() {
+    process.kill(process.pid, "SIGTERM")
+  },
+}
 
 const TUI_VERSION = "0.1.0"
 const MODEL_NAME = "GPT-5.4 OpenAI"
@@ -189,12 +196,26 @@ export function App() {
 
   const composerWelcomeWidth = Math.min(72, Math.max(36, Math.floor(width * 0.48)))
 
+  const quitApp = useCallback(() => {
+    if (!renderer.isDestroyed) {
+      renderer.destroy()
+    }
+
+    appLifecycle.requestProcessExit()
+  }, [renderer])
+
   const submit = useCallback(
     (raw: string) => {
       const text = raw.trim()
       if (!text) {
         return
       }
+
+      if (text.toLowerCase() === EXIT_MESSAGE) {
+        quitApp()
+        return
+      }
+
       const timestamp = formatMessageTimestamp(new Date())
 
       setMessages((prev) => [
@@ -205,12 +226,12 @@ export function App() {
       setDraft("")
       setComposerResetToken((value) => value + 1)
     },
-    [listId],
+    [listId, quitApp],
   )
 
   useKeyboard((key) => {
     if (key.name === "escape" || (key.ctrl && key.name === "c")) {
-      renderer.destroy()
+      quitApp()
       return
     }
 
@@ -261,9 +282,9 @@ export function App() {
                   wrapperOptions: { backgroundColor: BG },
                   viewportOptions: { backgroundColor: BG },
                   contentOptions: { backgroundColor: BG },
-                  scrollbarOptions: {
-                    trackOptions: { foregroundColor: ACCENT, backgroundColor: "#1a1a1a" },
-                  },
+                    scrollbarOptions: {
+                      trackOptions: { foregroundColor: WHITE, backgroundColor: "#1a1a1a" },
+                    },
                 }}
               >
                 <box flexDirection="column" padding={1} gap={0}>

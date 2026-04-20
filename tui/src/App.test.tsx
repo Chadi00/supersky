@@ -1,7 +1,7 @@
-import { afterEach, expect, test } from "bun:test"
+import { afterEach, expect, spyOn, test } from "bun:test"
 import { testRender } from "@opentui/react/test-utils"
 import { act } from "react"
-import { App } from "./App"
+import { App, appLifecycle } from "./App"
 
 let testSetup: Awaited<ReturnType<typeof testRender>> | undefined
 
@@ -59,6 +59,21 @@ test("submits the composer with enter", async () => {
   expect(frame).toContain("send on enter")
   expect(occurrences).toBe(1)
   expect(timestampMatch).not.toBeNull()
+})
+
+test("sending exit quits the app", async () => {
+  testSetup = await testRender(<App />, { width: 110, height: 30 })
+  const requestProcessExit = spyOn(appLifecycle, "requestProcessExit").mockImplementation(() => {})
+
+  await act(async () => {
+    await testSetup!.renderOnce()
+    await testSetup!.mockInput.typeText("exit")
+    testSetup!.mockInput.pressKey("RETURN")
+    await testSetup!.renderOnce()
+  })
+
+  expect(testSetup.renderer.isDestroyed).toBe(true)
+  expect(requestProcessExit).toHaveBeenCalledTimes(1)
 })
 
 test("inserts a newline for multiline enter", async () => {
