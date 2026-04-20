@@ -32,9 +32,19 @@ type ComposerProps = {
   onSubmit: (value: string) => void
   focused: boolean
   minHeight?: number
+  justifyContent?: "center" | "flex-end"
 }
 
-function Composer({ width, draft, resetToken, onDraftChange, onSubmit, focused, minHeight = COMPOSER_MIN_HEIGHT }: ComposerProps) {
+function Composer({
+  width,
+  draft,
+  resetToken,
+  onDraftChange,
+  onSubmit,
+  focused,
+  minHeight = COMPOSER_MIN_HEIGHT,
+  justifyContent = "center",
+}: ComposerProps) {
   const textareaRef = useRef<TextareaRenderable | null>(null)
 
   useKeyboard((key) => {
@@ -65,7 +75,7 @@ function Composer({ width, draft, resetToken, onDraftChange, onSubmit, focused, 
           paddingTop={COMPOSER_VERTICAL_PADDING}
           paddingBottom={COMPOSER_VERTICAL_PADDING}
           minHeight={minHeight}
-          justifyContent="center"
+          justifyContent={justifyContent}
         >
           <textarea
             key={resetToken}
@@ -152,10 +162,6 @@ function Sidebar({ showModified }: { showModified: boolean }) {
         </box>
       )}
       <box flexGrow={1} />
-      <box flexDirection="column" gap={0}>
-        <text fg={MUTED}>{PROJECT_LINE}</text>
-        <text fg={MUTED}>supersky tui {TUI_VERSION}</text>
-      </box>
     </box>
   )
 }
@@ -229,8 +235,8 @@ export function App() {
             />
           </box>
         ) : (
-          <box flexGrow={1} flexDirection={showSidebar ? "row" : "column"} paddingX={1} gap={1} minHeight={0}>
-            <box flexGrow={1} flexDirection="column" minHeight={0} minWidth={0}>
+          <box flexGrow={1} flexDirection={showSidebar ? "row" : "column"} alignItems="stretch" paddingX={1} gap={1} minHeight={0}>
+            <box flexGrow={1} height="100%" flexDirection="column" minHeight={0} minWidth={0}>
               <scrollbox
                 flexGrow={1}
                 focused={false}
@@ -259,7 +265,7 @@ export function App() {
                 </box>
               </scrollbox>
 
-              <box paddingTop={1} flexShrink={0}>
+              <box paddingTop={0} flexShrink={0}>
                 <Composer
                   width="100%"
                   draft={draft}
@@ -267,12 +273,14 @@ export function App() {
                   onDraftChange={setDraft}
                   onSubmit={submit}
                   focused
+                  minHeight={4}
+                  justifyContent="flex-end"
                 />
               </box>
             </box>
 
             {showSidebar && (
-              <box width={Math.min(34, Math.floor(width * 0.26))} flexShrink={0} minHeight={0}>
+              <box width={sidebarWidth} height="100%" flexShrink={0} minHeight={0}>
                 <Sidebar showModified />
               </box>
             )}
@@ -285,7 +293,7 @@ export function App() {
         justifyContent="space-between"
         alignItems="center"
         paddingX={2}
-        paddingTop={1}
+        paddingTop={isNewSession ? 1 : 0}
         paddingBottom={1}
       >
         <text fg={MUTED}>{PROJECT_LINE}</text>
