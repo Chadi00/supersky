@@ -1,0 +1,15 @@
+export const colors = {
+  background: "#000000",
+  panelBackground: "#111111",
+  composerBackground: "#141414",
+  mutedText: "#5a5a5a",
+  dimText: "#8a8a8a",
+  successText: "#4ade80",
+  accentText: "#7cc6ff",
+  verificationText: "#f472b6",
+  warningText: "#fbbf24",
+  foregroundText: "#e8e8e8",
+  userMessageBackground: "#1b1b1b",
+  bannerText: "#d0d0d0",
+  sidebarStatusText: "#6a6a6a",
+} as const;
