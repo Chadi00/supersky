@@ -5,6 +5,8 @@ import { App, appLifecycle } from "./App"
 
 let testSetup: Awaited<ReturnType<typeof testRender>> | undefined
 
+type TestSetup = Awaited<ReturnType<typeof testRender>>
+
 function findScrollbox(node: unknown): any {
   if (!node || typeof node !== "object") {
     return null
@@ -28,6 +30,27 @@ function findScrollbox(node: unknown): any {
   }
 
   return null
+}
+
+async function sendMessages(setup: TestSetup, count: number, startIndex = 0) {
+  await act(async () => {
+    for (let i = 0; i < count; i++) {
+      await setup.mockInput.typeText(`message ${startIndex + i}`)
+      setup.mockInput.pressKey("RETURN")
+      await setup.renderOnce()
+    }
+  })
+}
+
+async function settleScrollLayout(setup: TestSetup) {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    await setup.renderOnce()
+  })
+}
+
+function isScrollbarVisible(scrollbox: any) {
+  return !scrollbox.verticalScrollBar.slider.foregroundColor.equals(scrollbox.verticalScrollBar.slider.backgroundColor)
 }
 
 afterEach(async () => {
@@ -148,20 +171,76 @@ test("settles the message scrollbar to the real viewport height", async () => {
 
   await act(async () => {
     await testSetup!.renderOnce()
-    for (let i = 0; i < 4; i++) {
-      await testSetup!.mockInput.typeText(`message ${i}`)
-      testSetup!.mockInput.pressKey("RETURN")
-      await testSetup!.renderOnce()
-    }
   })
-
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 30))
-    await testSetup!.renderOnce()
-  })
+  await sendMessages(testSetup!, 4)
+  await settleScrollLayout(testSetup!)
 
   const scrollbox = findScrollbox(testSetup.renderer.root)
 
   expect(scrollbox).not.toBeNull()
   expect(scrollbox.verticalScrollBar.slider._viewPortSize).toBe(scrollbox.viewport.height)
+})
+
+test("only shows the scrollbar once the message list overflows", async () => {
+  testSetup = await testRender(<App />, { width: 110, height: 30 })
+
+  await act(async () => {
+    await testSetup!.renderOnce()
+  })
+  await sendMessages(testSetup!, 1)
+  await settleScrollLayout(testSetup!)
+
+  let scrollbox = findScrollbox(testSetup.renderer.root)
+
+  expect(isScrollbarVisible(scrollbox)).toBe(false)
+
+  await sendMessages(testSetup!, 3, 1)
+  await settleScrollLayout(testSetup!)
+
+  scrollbox = findScrollbox(testSetup.renderer.root)
+
+  expect(isScrollbarVisible(scrollbox)).toBe(true)
+})
+
+test("keeps the message panel geometry stable when overflow starts", async () => {
+  testSetup = await testRender(<App />, { width: 110, height: 30 })
+
+  await act(async () => {
+    await testSetup!.renderOnce()
+  })
+  await sendMessages(testSetup!, 1)
+  await settleScrollLayout(testSetup!)
+
+  const appShell = testSetup.renderer.root.getChildren()[0]!
+  const initialBody = appShell.getChildren()[0]!
+  const initialFooter = appShell.getChildren()[1]!
+  let scrollbox = findScrollbox(testSetup.renderer.root)
+  const initialGeometry = {
+    x: scrollbox.x,
+    y: scrollbox.y,
+    width: scrollbox.width,
+    height: scrollbox.height,
+    viewportWidth: scrollbox.viewport.width,
+    viewportHeight: scrollbox.viewport.height,
+    footerY: initialFooter.y,
+    footerHeight: initialFooter.height,
+    bodyHeight: initialBody.height,
+  }
+
+  await sendMessages(testSetup!, 3, 1)
+  await settleScrollLayout(testSetup!)
+
+  scrollbox = findScrollbox(testSetup.renderer.root)
+  const settledBody = appShell.getChildren()[0]!
+  const settledFooter = appShell.getChildren()[1]!
+
+  expect(scrollbox.x).toBe(initialGeometry.x)
+  expect(scrollbox.y).toBe(initialGeometry.y)
+  expect(scrollbox.width).toBe(initialGeometry.width)
+  expect(scrollbox.height).toBe(initialGeometry.height)
+  expect(scrollbox.viewport.width).toBe(initialGeometry.viewportWidth)
+  expect(scrollbox.viewport.height).toBe(initialGeometry.viewportHeight)
+  expect(settledFooter.y).toBe(initialGeometry.footerY)
+  expect(settledFooter.height).toBe(initialGeometry.footerHeight)
+  expect(settledBody.height).toBe(initialGeometry.bodyHeight)
 })

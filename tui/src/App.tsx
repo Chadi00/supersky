@@ -22,6 +22,15 @@ const BLUE = "#7cc6ff"
 const AMBER = "#fbbf24"
 const WHITE = "#e8e8e8"
 const USER_MESSAGE_BG = "#1b1b1b"
+const MESSAGE_SCROLLBAR_TRACK_BG = "#1a1a1a"
+const MESSAGE_SCROLLBAR_VISIBLE_TRACK = {
+  foregroundColor: WHITE,
+  backgroundColor: MESSAGE_SCROLLBAR_TRACK_BG,
+}
+const MESSAGE_SCROLLBAR_HIDDEN_TRACK = {
+  foregroundColor: BG,
+  backgroundColor: BG,
+}
 const EXIT_MESSAGE = "exit"
 
 export const appLifecycle = {
@@ -207,7 +216,11 @@ export function App() {
       return
     }
 
+    const needsVerticalScrollbar = node.content.height > node.viewport.height
     node.verticalScrollBar.visible = true
+    node.verticalScrollBar.trackOptions = needsVerticalScrollbar
+      ? MESSAGE_SCROLLBAR_VISIBLE_TRACK
+      : MESSAGE_SCROLLBAR_HIDDEN_TRACK
 
     const viewportHeight = Math.max(1, node.viewport.height)
     const slider = node.verticalScrollBar.slider as unknown as ScrollbarSliderViewportSync
@@ -335,9 +348,9 @@ export function App() {
                   wrapperOptions: { backgroundColor: BG },
                   viewportOptions: { backgroundColor: BG },
                   contentOptions: { backgroundColor: BG },
-                    scrollbarOptions: {
-                      trackOptions: { foregroundColor: WHITE, backgroundColor: "#1a1a1a" },
-                    },
+                  scrollbarOptions: {
+                    trackOptions: MESSAGE_SCROLLBAR_HIDDEN_TRACK,
+                  },
                 }}
               >
                 <box flexDirection="column" padding={1} gap={0}>
@@ -384,6 +397,7 @@ export function App() {
         flexDirection="row"
         justifyContent="space-between"
         alignItems="center"
+        flexShrink={0}
         paddingX={2}
         paddingTop={isNewSession ? 1 : 0}
         paddingBottom={1}
