@@ -3,9 +3,10 @@ import { appMetadata } from "./config";
 
 type AppFooterProps = {
   isNewSession: boolean;
+  projectLine: string;
 };
 
-export function AppFooter({ isNewSession }: AppFooterProps) {
+export function AppFooter({ isNewSession, projectLine }: AppFooterProps) {
   return (
     <box
       flexDirection="row"
@@ -16,7 +17,7 @@ export function AppFooter({ isNewSession }: AppFooterProps) {
       paddingTop={isNewSession ? 1 : 0}
       paddingBottom={1}
     >
-      <text fg={colors.mutedText}>{appMetadata.projectLine}</text>
+      <text fg={colors.mutedText}>{projectLine}</text>
       <text>
         <span fg={colors.mutedText}>{appMetadata.modelName}</span>
         <span fg={colors.mutedText}> · </span>

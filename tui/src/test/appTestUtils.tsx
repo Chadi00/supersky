@@ -3,6 +3,8 @@ import { act } from "react";
 
 import { App } from "../App";
 
+const DEFAULT_PROJECT_LINE = "~/projects/supersky:main";
+
 type TerminalSize = {
   width: number;
   height: number;
@@ -132,8 +134,11 @@ async function destroyApp(setup: AppTestSetup) {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-export async function renderApp(size: TerminalSize = DEFAULT_TERMINAL_SIZE) {
-  const setup = await testRender(<App />, {
+export async function renderApp(
+  size: TerminalSize = DEFAULT_TERMINAL_SIZE,
+  projectLine = DEFAULT_PROJECT_LINE,
+) {
+  const setup = await testRender(<App projectLine={projectLine} />, {
     ...size,
     exitOnCtrlC: false,
   });
@@ -146,9 +151,10 @@ export async function renderApp(size: TerminalSize = DEFAULT_TERMINAL_SIZE) {
 export async function withApp(
   run: (setup: AppTestSetup) => Promise<void> | void,
   size: TerminalSize = DEFAULT_TERMINAL_SIZE,
+  projectLine = DEFAULT_PROJECT_LINE,
 ) {
   return runAppTestSerial(async () => {
-    const setup = await renderApp(size);
+    const setup = await renderApp(size, projectLine);
 
     try {
       await run(setup);

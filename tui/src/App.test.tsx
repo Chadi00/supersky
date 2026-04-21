@@ -35,6 +35,18 @@ test("renders the supersky TUI shell (new session)", async () => {
   });
 });
 
+test("renders the provided project line in the footer", async () => {
+  await withApp(
+    (setup) => {
+      const frame = setup.captureCharFrame();
+
+      expect(frame).toContain("~/projects/demo:feature/footer");
+    },
+    { width: 110, height: 30 },
+    "~/projects/demo:feature/footer",
+  );
+});
+
 test("preserves rapid composer typing without resetting the draft", async () => {
   await withApp(async (setup) => {
     await typeText(setup, "fast typing should stay stable");

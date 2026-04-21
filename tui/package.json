@@ -1,8 +1,11 @@
 {
-  "name": "tui",
+  "name": "supersky",
   "module": "src/index.tsx",
   "type": "module",
   "private": true,
+  "bin": {
+    "supersky": "./bin/supersky"
+  },
   "scripts": {
     "start": "bun run src/index.tsx",
     "dev": "bun run --watch src/index.tsx",

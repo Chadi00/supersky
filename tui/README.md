@@ -6,6 +6,8 @@ Minimal fullscreen OpenTUI shell for the `supersky` project.
 
 ```bash
 bun install
+chmod +x bin/supersky
+bun link
 bun run dev
 bun run format
 bun run lint
@@ -13,6 +15,8 @@ bun run test
 bun run typecheck
 bun run check
 ```
+
+After linking, run `supersky` from any project directory to open the TUI there.
 
 ## Controls
 

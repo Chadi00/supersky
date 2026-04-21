@@ -9,7 +9,11 @@ import { useSessionController } from "./session/useSessionController";
 import { WelcomeScreen } from "./session/WelcomeScreen";
 import { colors } from "./shared/theme";
 
-export function App() {
+type AppProps = {
+  projectLine: string;
+};
+
+export function App({ projectLine }: AppProps) {
   const { width } = useTerminalDimensions();
   const {
     state,
@@ -82,7 +86,7 @@ export function App() {
         )}
       </box>
 
-      <AppFooter isNewSession={isNewSession} />
+      <AppFooter isNewSession={isNewSession} projectLine={projectLine} />
     </box>
   );
 }
