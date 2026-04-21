@@ -4,6 +4,9 @@ import { Composer } from "./Composer";
 type WelcomeScreenProps = {
   composerWidth: number;
   draft: string;
+  commandNotice: string | null;
+  dismissSlashMenuToken: number;
+  onSlashMenuOpenChange: (open: boolean) => void;
   resetToken: number;
   onDraftChange: (value: string) => void;
   onSubmit: (value: string) => void;
@@ -16,6 +19,9 @@ type WelcomeScreenProps = {
 export function WelcomeScreen({
   composerWidth,
   draft,
+  commandNotice,
+  dismissSlashMenuToken,
+  onSlashMenuOpenChange,
   resetToken,
   onDraftChange,
   onSubmit,
@@ -41,6 +47,9 @@ export function WelcomeScreen({
       <Composer
         width={composerWidth}
         draft={draft}
+        commandNotice={commandNotice}
+        dismissSlashMenuToken={dismissSlashMenuToken}
+        onSlashMenuOpenChange={onSlashMenuOpenChange}
         resetToken={resetToken}
         onDraftChange={onDraftChange}
         onSubmit={onSubmit}

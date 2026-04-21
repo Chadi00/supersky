@@ -20,6 +20,9 @@ export function App({ projectLine }: AppProps) {
     isNewSession,
     hasSubmittedUserMessages,
     isBrowsingHistory,
+    commandNotice,
+    dismissSlashMenuToken,
+    setSlashMenuOpen,
     setDraft,
     submit,
     showPreviousHistory,
@@ -39,6 +42,9 @@ export function App({ projectLine }: AppProps) {
           <WelcomeScreen
             composerWidth={layout.welcomeComposerWidth}
             draft={state.draft}
+            commandNotice={commandNotice}
+            dismissSlashMenuToken={dismissSlashMenuToken}
+            onSlashMenuOpenChange={setSlashMenuOpen}
             resetToken={state.composerResetToken}
             onDraftChange={setDraft}
             onSubmit={submit}
@@ -65,6 +71,9 @@ export function App({ projectLine }: AppProps) {
                 <Composer
                   width="100%"
                   draft={state.draft}
+                  commandNotice={commandNotice}
+                  dismissSlashMenuToken={dismissSlashMenuToken}
+                  onSlashMenuOpenChange={setSlashMenuOpen}
                   resetToken={state.composerResetToken}
                   onDraftChange={setDraft}
                   onSubmit={submit}

@@ -165,17 +165,22 @@ export async function withApp(
 }
 
 export async function typeText(setup: AppTestSetup, text: string) {
-  await runInput(setup, () => setup.mockInput.typeText(text));
+  await runInput(setup, () => setup.mockInput.typeText(text), {
+    renderPasses: 3,
+  });
 }
 
 export async function submitText(setup: AppTestSetup, text: string) {
   await typeText(setup, text);
   await pressEnter(setup);
+  await runInput(setup, () => undefined, {
+    renderPasses: 2,
+  });
 }
 
 export async function pressEnter(setup: AppTestSetup) {
   await runInput(setup, () => setup.mockInput.pressEnter(), {
-    renderPasses: 3,
+    renderPasses: 5,
   });
 }
 
@@ -206,6 +211,18 @@ export async function pressDown(setup: AppTestSetup) {
 
 export async function pressLinefeed(setup: AppTestSetup) {
   await runInput(setup, () => setup.mockInput.pressKey("LINEFEED"));
+}
+
+export async function pressTab(setup: AppTestSetup) {
+  await runInput(setup, () => setup.mockInput.pressTab(), {
+    renderPasses: 2,
+  });
+}
+
+export async function pressEscape(setup: AppTestSetup) {
+  await runInput(setup, () => setup.mockInput.pressEscape(), {
+    renderPasses: 2,
+  });
 }
 
 export async function sendMessages(

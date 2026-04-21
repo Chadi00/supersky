@@ -2,10 +2,16 @@ import { expect, test } from "bun:test";
 
 import {
   EXIT_COMMAND,
+  getMatchingSlashCommands,
+  getSlashMenuQuery,
   isExitCommand,
   isExitShortcut,
   isNewSessionShortcut,
+  MODEL_COMMAND,
+  NEW_SESSION_COMMAND,
   normalizeCommandInput,
+  parseSubmittedSlashCommand,
+  replaceSlashCommandInput,
 } from "./commands";
 
 test("normalizes command input before matching", () => {
@@ -27,4 +33,37 @@ test("matches escape and ctrl+c as exit shortcuts", () => {
 test("matches ctrl+n as the new-session shortcut", () => {
   expect(isNewSessionShortcut({ name: "n", ctrl: true })).toBe(true);
   expect(isNewSessionShortcut({ name: "n", ctrl: false })).toBe(false);
+});
+
+test("opens the slash menu only while the cursor is inside the leading token", () => {
+  expect(getSlashMenuQuery("/model", 6)).toBe(MODEL_COMMAND);
+  expect(getSlashMenuQuery("/model arg", 6)).toBe(MODEL_COMMAND);
+  expect(getSlashMenuQuery("/model arg", 10)).toBeNull();
+  expect(getSlashMenuQuery("hello /model", 12)).toBeNull();
+});
+
+test("matches slash commands by prefix before description text", () => {
+  expect(getMatchingSlashCommands("m")[0]?.name).toBe(MODEL_COMMAND);
+  expect(getMatchingSlashCommands("session")[0]?.name).toBe(
+    NEW_SESSION_COMMAND,
+  );
+});
+
+test("parses a submitted slash command from the first token", () => {
+  expect(parseSubmittedSlashCommand(" /ExIt  ")?.name).toBe(EXIT_COMMAND);
+  expect(parseSubmittedSlashCommand("/new later")?.name).toBe(
+    NEW_SESSION_COMMAND,
+  );
+  expect(parseSubmittedSlashCommand("hello")).toBeNull();
+});
+
+test("replaces the leading slash command while preserving arguments", () => {
+  expect(replaceSlashCommandInput("/m", MODEL_COMMAND)).toEqual({
+    text: "/model ",
+    cursorOffset: 7,
+  });
+  expect(replaceSlashCommandInput("/m keep-this", MODEL_COMMAND)).toEqual({
+    text: "/model keep-this",
+    cursorOffset: 6,
+  });
 });

@@ -13,6 +13,7 @@ import {
   pressDown,
   pressEnter,
   pressLinefeed,
+  pressTab,
   pressUp,
   sendMessages,
   settleScrollLayout,
@@ -72,6 +73,67 @@ test("submits the composer with enter", async () => {
   });
 });
 
+test("typing slash opens the command menu", async () => {
+  await withApp(async (setup) => {
+    await typeText(setup, "/");
+    await settleScrollLayout(setup);
+
+    const frame = setup.captureCharFrame();
+
+    expect(frame).toContain("/provider");
+    expect(frame).toContain("/model");
+    expect(frame).toContain("/settings");
+    expect(frame).toContain("/new");
+    expect(frame).toContain("/exit");
+  });
+});
+
+test("the command menu filters as the slash query changes", async () => {
+  await withApp(async (setup) => {
+    await typeText(setup, "/m");
+    await settleScrollLayout(setup);
+
+    const frame = setup.captureCharFrame();
+
+    expect(frame).toContain("/model");
+    expect(frame).not.toContain("/provider");
+    expect(frame).not.toContain("/settings");
+  });
+});
+
+test("enter selects the highlighted slash command without submitting", async () => {
+  await withApp(async (setup) => {
+    await typeText(setup, "/");
+    await pressDown(setup);
+    await pressDown(setup);
+    await pressEnter(setup);
+
+    const frame = setup.captureCharFrame();
+
+    expect(getComposerText(setup)).toBe("/settings ");
+    expect(frame).not.toContain("Assistant");
+  });
+});
+
+test("tab selects the highlighted slash command", async () => {
+  await withApp(async (setup) => {
+    await typeText(setup, "/m");
+    await pressTab(setup);
+
+    expect(getComposerText(setup)).toBe("/model ");
+  });
+});
+
+test("typing past the slash command token closes the menu", async () => {
+  await withApp(async (setup) => {
+    await typeText(setup, "/ ");
+
+    const frame = setup.captureCharFrame();
+
+    expect(frame).not.toContain("/provider");
+  });
+});
+
 test("sending exit quits the app", async () => {
   const requestProcessExit = spyOn(
     appLifecycle,
@@ -81,6 +143,25 @@ test("sending exit quits the app", async () => {
   try {
     await withApp(async (setup) => {
       await submitText(setup, "exit");
+      await Promise.resolve();
+
+      expect(setup.renderer.isDestroyed).toBe(true);
+      expect(requestProcessExit).toHaveBeenCalledTimes(1);
+    });
+  } finally {
+    requestProcessExit.mockRestore();
+  }
+});
+
+test("sending slash exit quits the app", async () => {
+  const requestProcessExit = spyOn(
+    appLifecycle,
+    "requestProcessExit",
+  ).mockImplementation(() => {});
+
+  try {
+    await withApp(async (setup) => {
+      await submitText(setup, "/exit");
       await Promise.resolve();
 
       expect(setup.renderer.isDestroyed).toBe(true);
@@ -336,6 +417,52 @@ test("ctrl+n resets an in-session view back to the welcome screen", async () => 
     expect(frame).toContain("supersky");
     expect(frame).not.toContain("new session please");
     expect(frame).not.toContain("Assistant");
+  });
+});
+
+test("slash new resets an in-session view back to the welcome screen", async () => {
+  await withApp(async (setup) => {
+    await submitText(setup, "new session please");
+    await submitText(setup, "/new");
+    await settleScrollLayout(setup);
+
+    const frame = setup.captureCharFrame();
+
+    expect(frame).toContain("supersky");
+    expect(frame).not.toContain("new session please");
+    expect(frame).not.toContain("Assistant");
+  });
+});
+
+for (const [command, notice] of [
+  ["/provider", "Provider picker not implemented yet."],
+  ["/model", "Model picker not implemented yet."],
+  ["/settings", "Settings screen not implemented yet."],
+] as const) {
+  test(`submitting ${command} shows the stub notice`, async () => {
+    await withApp(async (setup) => {
+      await submitText(setup, command);
+      await settleScrollLayout(setup);
+
+      const frame = setup.captureCharFrame();
+
+      expect(frame).toContain(notice);
+      expect(frame).not.toContain("Assistant");
+      expect(getComposerText(setup)).toBe("");
+    });
+  });
+}
+
+test("submitting an unknown slash command shows an error notice", async () => {
+  await withApp(async (setup) => {
+    await submitText(setup, "/wat");
+    await settleScrollLayout(setup);
+
+    const frame = setup.captureCharFrame();
+
+    expect(frame).toContain("Unknown command: /wat");
+    expect(frame).not.toContain("Assistant");
+    expect(getComposerText(setup)).toBe("");
   });
 });
 
