@@ -1,5 +1,5 @@
-import type { TextareaRenderable } from "@opentui/core";
-import { useRef } from "react";
+import type { KeyEvent, TextareaRenderable } from "@opentui/core";
+import { useEffect, useRef } from "react";
 
 import { colors } from "../shared/theme";
 import { composerKeyBindings } from "./commands";
@@ -14,6 +14,10 @@ type ComposerProps = {
   resetToken: number;
   onDraftChange: (value: string) => void;
   onSubmit: (value: string) => void;
+  historyAvailable: boolean;
+  isBrowsingHistory: boolean;
+  onHistoryPrevious: () => void;
+  onHistoryNext: () => void;
   focused: boolean;
   minHeight?: number;
   justifyContent?: "center" | "flex-end";
@@ -25,11 +29,25 @@ export function Composer({
   resetToken,
   onDraftChange,
   onSubmit,
+  historyAvailable,
+  isBrowsingHistory,
+  onHistoryPrevious,
+  onHistoryNext,
   focused,
   minHeight = COMPOSER_MIN_HEIGHT,
   justifyContent = "center",
 }: ComposerProps) {
   const textareaRef = useRef<TextareaRenderable | null>(null);
+
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea || textarea.plainText === draft) {
+      return;
+    }
+
+    textarea.setText(draft);
+    textarea.gotoBufferEnd();
+  }, [draft]);
 
   const syncDraft = () => {
     const nextDraft = textareaRef.current?.plainText ?? "";
@@ -50,6 +68,66 @@ export function Composer({
     textareaRef.current?.clear();
     onDraftChange("");
     onSubmit(submitted);
+  };
+
+  const handleKeyDown = (key: KeyEvent) => {
+    const textarea = textareaRef.current;
+    if (
+      !textarea ||
+      !focused ||
+      key.ctrl ||
+      key.shift ||
+      key.meta ||
+      key.super ||
+      key.hyper
+    ) {
+      return;
+    }
+
+    const lastLineIndex = Math.max(0, textarea.lineCount - 1);
+
+    if (key.name === "up") {
+      if (textarea.logicalCursor.row > 0) {
+        return;
+      }
+
+      if (textarea.cursorOffset > 0) {
+        key.preventDefault();
+        key.stopPropagation();
+        textarea.gotoBufferHome();
+        return;
+      }
+
+      if (!historyAvailable) {
+        return;
+      }
+
+      key.preventDefault();
+      key.stopPropagation();
+      onHistoryPrevious();
+      return;
+    }
+
+    if (key.name === "down") {
+      if (textarea.logicalCursor.row < lastLineIndex) {
+        return;
+      }
+
+      if (textarea.cursorOffset < textarea.plainText.length) {
+        key.preventDefault();
+        key.stopPropagation();
+        textarea.gotoBufferEnd();
+        return;
+      }
+
+      if (!isBrowsingHistory) {
+        return;
+      }
+
+      key.preventDefault();
+      key.stopPropagation();
+      onHistoryNext();
+    }
   };
 
   return (
@@ -85,6 +163,7 @@ export function Composer({
             focusedTextColor={colors.foregroundText}
             wrapMode="word"
             keyBindings={composerKeyBindings}
+            onKeyDown={handleKeyDown}
             onContentChange={syncDraft}
             onSubmit={submitDraft}
           />

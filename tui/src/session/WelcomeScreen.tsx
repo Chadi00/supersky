@@ -7,6 +7,10 @@ type WelcomeScreenProps = {
   resetToken: number;
   onDraftChange: (value: string) => void;
   onSubmit: (value: string) => void;
+  historyAvailable: boolean;
+  isBrowsingHistory: boolean;
+  onHistoryPrevious: () => void;
+  onHistoryNext: () => void;
 };
 
 export function WelcomeScreen({
@@ -15,6 +19,10 @@ export function WelcomeScreen({
   resetToken,
   onDraftChange,
   onSubmit,
+  historyAvailable,
+  isBrowsingHistory,
+  onHistoryPrevious,
+  onHistoryNext,
 }: WelcomeScreenProps) {
   return (
     <box
@@ -36,6 +44,10 @@ export function WelcomeScreen({
         resetToken={resetToken}
         onDraftChange={onDraftChange}
         onSubmit={onSubmit}
+        historyAvailable={historyAvailable}
+        isBrowsingHistory={isBrowsingHistory}
+        onHistoryPrevious={onHistoryPrevious}
+        onHistoryNext={onHistoryNext}
         focused
         minHeight={3}
       />

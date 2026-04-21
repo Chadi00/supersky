@@ -14,6 +14,7 @@ type RenderableNode = {
   x?: number;
   y?: number;
   height?: number;
+  plainText?: string;
   verticalScrollBar?: { visible: boolean };
   horizontalScrollBar?: { visible: boolean };
 };
@@ -185,6 +186,18 @@ export async function pressCtrlN(setup: AppTestSetup) {
   });
 }
 
+export async function pressUp(setup: AppTestSetup) {
+  await runInput(setup, () => setup.mockInput.pressArrow("up"), {
+    renderPasses: 2,
+  });
+}
+
+export async function pressDown(setup: AppTestSetup) {
+  await runInput(setup, () => setup.mockInput.pressArrow("down"), {
+    renderPasses: 2,
+  });
+}
+
 export async function pressLinefeed(setup: AppTestSetup) {
   await runInput(setup, () => setup.mockInput.pressKey("LINEFEED"));
 }
@@ -239,6 +252,19 @@ export function areScrollbarsHidden(scrollbox: ScrollboxNode | null) {
     !scrollbox.verticalScrollBar.visible &&
     !scrollbox.horizontalScrollBar.visible
   );
+}
+
+export function getComposerText(setup: AppTestSetup) {
+  const textarea = findRenderableByConstructorName(
+    setup.renderer.root,
+    "TextareaRenderable",
+  );
+
+  if (!textarea || typeof textarea.plainText !== "string") {
+    throw new Error("Expected composer textarea");
+  }
+
+  return textarea.plainText;
 }
 
 export function isSidebarVisible(setup: AppTestSetup) {

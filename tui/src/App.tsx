@@ -11,7 +11,16 @@ import { colors } from "./shared/theme";
 
 export function App() {
   const { width } = useTerminalDimensions();
-  const { state, isNewSession, setDraft, submit } = useSessionController();
+  const {
+    state,
+    isNewSession,
+    hasSubmittedUserMessages,
+    isBrowsingHistory,
+    setDraft,
+    submit,
+    showPreviousHistory,
+    showNextHistory,
+  } = useSessionController();
   const layout = deriveSessionLayout(width, isNewSession);
 
   return (
@@ -29,6 +38,10 @@ export function App() {
             resetToken={state.composerResetToken}
             onDraftChange={setDraft}
             onSubmit={submit}
+            historyAvailable={hasSubmittedUserMessages}
+            isBrowsingHistory={isBrowsingHistory}
+            onHistoryPrevious={showPreviousHistory}
+            onHistoryNext={showNextHistory}
           />
         ) : (
           <box
@@ -51,6 +64,10 @@ export function App() {
                   resetToken={state.composerResetToken}
                   onDraftChange={setDraft}
                   onSubmit={submit}
+                  historyAvailable={hasSubmittedUserMessages}
+                  isBrowsingHistory={isBrowsingHistory}
+                  onHistoryPrevious={showPreviousHistory}
+                  onHistoryNext={showNextHistory}
                   focused
                 />
               </box>

@@ -19,6 +19,7 @@ bun run check
 ```text
 Enter                     Submit the current prompt
 Shift+Enter / Linefeed    Insert a newline in the composer
+Up / Down                 Move lines first, then recall at top/bottom start/end
 Ctrl+C                    Exit cleanly
 Ctrl+N                    Reset back to a new session
 exit + Enter              Exit cleanly from the composer
@@ -45,6 +46,7 @@ The suite covers the current visible behavior and the pure helper modules:
 - prompt submission
 - `exit` command handling
 - multiline drafting and submission layout
+- composer history recall with `Up` / `Down`
 - `Ctrl+C` exit and `Ctrl+N` reset
 - wide vs narrow sidebar behavior
 - hidden scrollbars and footer anchoring under overflow

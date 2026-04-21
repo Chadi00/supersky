@@ -16,6 +16,8 @@ export type SessionState = {
   draft: string;
   messages: SessionMessage[];
   composerResetToken: number;
+  historyIndex: number | null;
+  historyDraft: string | null;
 };
 
 export function createInitialSessionState(): SessionState {
@@ -23,5 +25,7 @@ export function createInitialSessionState(): SessionState {
     draft: "",
     messages: [],
     composerResetToken: 0,
+    historyIndex: null,
+    historyDraft: null,
   };
 }

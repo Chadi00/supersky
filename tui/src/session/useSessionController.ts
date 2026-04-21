@@ -31,6 +31,14 @@ export function useSessionController() {
     dispatch({ type: "draftChanged", value });
   }, []);
 
+  const showPreviousHistory = useCallback(() => {
+    dispatch({ type: "historyPrevious" });
+  }, []);
+
+  const showNextHistory = useCallback(() => {
+    dispatch({ type: "historyNext" });
+  }, []);
+
   const submit = useCallback(
     (raw: string) => {
       const text = raw.trim();
@@ -69,11 +77,19 @@ export function useSessionController() {
 
   useKeyboard(handleKeyboardInput);
 
+  const hasSubmittedUserMessages = state.messages.some(
+    (message) => message.role === "user",
+  );
+
   return {
     state,
     isNewSession: state.messages.length === 0,
+    hasSubmittedUserMessages,
+    isBrowsingHistory: state.historyIndex !== null,
     setDraft,
     submit,
+    showPreviousHistory,
+    showNextHistory,
     resetSession,
   };
 }

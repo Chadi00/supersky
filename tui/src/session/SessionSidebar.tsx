@@ -1,5 +1,6 @@
 import { sidebarData } from "../app/config";
 import { colors } from "../shared/theme";
+import { SIDEBAR_MIN_WIDTH } from "./layout";
 
 type SessionSidebarProps = {
   showModified?: boolean;
@@ -14,7 +15,7 @@ export function SessionSidebar({ showModified = true }: SessionSidebarProps) {
       backgroundColor={colors.panelBackground}
       padding={1}
       gap={1}
-      minWidth={26}
+      minWidth={SIDEBAR_MIN_WIDTH}
     >
       <text fg={colors.foregroundText}>
         <strong>{sidebarData.title}</strong>

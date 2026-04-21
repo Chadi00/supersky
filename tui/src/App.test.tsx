@@ -1,15 +1,19 @@
 import { expect, spyOn, test } from "bun:test";
+import { SIDEBAR_LAYOUT_WIDTH } from "./session/layout";
 import { appLifecycle } from "./shared/lifecycle";
 import {
   areScrollbarsHidden,
   captureShellGeometry,
   findRenderableByConstructorName,
   findScrollbox,
+  getComposerText,
   isSidebarVisible,
   pressCtrlC,
   pressCtrlN,
+  pressDown,
   pressEnter,
   pressLinefeed,
+  pressUp,
   sendMessages,
   settleScrollLayout,
   submitText,
@@ -161,6 +165,113 @@ test("sending a multiline message does not add an extra blank line", async () =>
   });
 });
 
+test("up arrow recalls the most recent sent user message", async () => {
+  await withApp(async (setup) => {
+    await submitText(setup, "first prompt");
+    await submitText(setup, "second prompt");
+    await pressUp(setup);
+
+    expect(getComposerText(setup)).toBe("second prompt");
+  });
+});
+
+test("up and down walk through submitted user message history", async () => {
+  await withApp(async (setup) => {
+    await submitText(setup, "first prompt");
+    await submitText(setup, "second prompt");
+    await submitText(setup, "third prompt");
+
+    await pressUp(setup);
+    expect(getComposerText(setup)).toBe("third prompt");
+
+    await pressUp(setup);
+    expect(getComposerText(setup)).toBe("third prompt");
+
+    await pressUp(setup);
+    expect(getComposerText(setup)).toBe("second prompt");
+
+    await pressDown(setup);
+    expect(getComposerText(setup)).toBe("third prompt");
+  });
+});
+
+test("down arrow restores the unsent draft after leaving history", async () => {
+  await withApp(async (setup) => {
+    await submitText(setup, "saved prompt");
+    await typeText(setup, "draft in progress");
+
+    await pressUp(setup);
+    expect(getComposerText(setup)).toBe("draft in progress");
+
+    await pressUp(setup);
+    expect(getComposerText(setup)).toBe("saved prompt");
+
+    await pressDown(setup);
+    expect(getComposerText(setup)).toBe("draft in progress");
+  });
+});
+
+test("up arrow moves to the previous line before recalling history", async () => {
+  await withApp(async (setup) => {
+    await submitText(setup, "saved prompt");
+    await typeText(setup, "x");
+    await pressLinefeed(setup);
+    await typeText(setup, "long line");
+
+    await pressUp(setup);
+    expect(getComposerText(setup)).toBe("x\nlong line");
+
+    await pressUp(setup);
+    expect(getComposerText(setup)).toBe("x\nlong line");
+
+    await pressUp(setup);
+    expect(getComposerText(setup)).toBe("saved prompt");
+  });
+});
+
+test("down arrow moves to the next line before leaving history", async () => {
+  await withApp(async (setup) => {
+    await typeText(setup, "x");
+    await pressLinefeed(setup);
+    await typeText(setup, "long line");
+    await pressEnter(setup);
+    await typeText(setup, "draft in progress");
+
+    await pressUp(setup);
+    await pressUp(setup);
+    expect(getComposerText(setup)).toBe("x\nlong line");
+
+    await pressUp(setup);
+    expect(getComposerText(setup)).toBe("x\nlong line");
+
+    await pressDown(setup);
+    expect(getComposerText(setup)).toBe("x\nlong line");
+
+    await pressDown(setup);
+    expect(getComposerText(setup)).toBe("draft in progress");
+  });
+});
+
+test("down arrow moves to the end before leaving history", async () => {
+  await withApp(async (setup) => {
+    await submitText(setup, "saved prompt");
+    await typeText(setup, "draft in progress");
+
+    await pressUp(setup);
+    await pressUp(setup);
+    expect(getComposerText(setup)).toBe("saved prompt");
+
+    await pressUp(setup);
+    expect(getComposerText(setup)).toBe("saved prompt");
+
+    await pressDown(setup);
+    expect(getComposerText(setup)).toBe("saved prompt");
+
+    await pressDown(setup);
+    expect(getComposerText(setup)).toBe("draft in progress");
+  });
+});
+
 test("shows the sidebar in-session on wide terminals", async () => {
   await withApp(async (setup) => {
     await sendMessages(setup, 1);
@@ -198,7 +309,7 @@ test("hides the sidebar on narrow terminals", async () => {
 
       expect(isSidebarVisible(setup)).toBe(false);
     },
-    { width: 70, height: 30 },
+    { width: SIDEBAR_LAYOUT_WIDTH - 1, height: 30 },
   );
 });
 
