@@ -1,4 +1,8 @@
-import type { KeyEvent, TextareaRenderable } from "@opentui/core";
+import type {
+  KeyEvent,
+  ScrollBoxRenderable,
+  TextareaRenderable,
+} from "@opentui/core";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { colors } from "../shared/theme";
@@ -6,13 +10,147 @@ import {
   composerKeyBindings,
   getMatchingSlashCommands,
   getSlashMenuQuery,
-  replaceSlashCommandInput,
+  type SlashCommand,
+  type SlashCommandName,
 } from "./commands";
 
 const COMPOSER_MIN_HEIGHT = 3;
 const COMPOSER_MAX_TEXT_LINES = 4;
 const COMPOSER_VERTICAL_PADDING = 1;
-const COMMAND_MENU_MAX_ITEMS = 5;
+const COMMAND_MENU_MAX_ITEMS = 10;
+const COMMAND_MENU_Z_INDEX = 100;
+
+function getCommandRowId(commandName: SlashCommandName) {
+  return `slash-command-item-${commandName}`;
+}
+
+type SlashCommandMenuProps = {
+  commands: SlashCommand[];
+  selectedIndex: number;
+  onSelect: (index: number) => void;
+  onExecute: (commandName: SlashCommandName) => void;
+};
+
+function SlashCommandMenu({
+  commands,
+  selectedIndex,
+  onSelect,
+  onExecute,
+}: SlashCommandMenuProps) {
+  const scrollboxRef = useRef<ScrollBoxRenderable | null>(null);
+
+  const visibleRows = Math.max(
+    1,
+    Math.min(commands.length, COMMAND_MENU_MAX_ITEMS),
+  );
+
+  useEffect(() => {
+    const selectedCommand = commands[selectedIndex];
+    if (!selectedCommand) {
+      return;
+    }
+
+    scrollboxRef.current?.scrollChildIntoView(
+      getCommandRowId(selectedCommand.name),
+    );
+  }, [commands, selectedIndex]);
+
+  return (
+    <box
+      position="absolute"
+      left={0}
+      bottom="100%"
+      width="100%"
+      zIndex={COMMAND_MENU_Z_INDEX}
+      overflow="visible"
+    >
+      <box
+        width="100%"
+        flexDirection="column"
+        backgroundColor={colors.commandMenuBackground}
+        border
+        borderColor={colors.commandMenuBorder}
+      >
+        <scrollbox
+          ref={scrollboxRef}
+          height={visibleRows}
+          focused={false}
+          scrollX={false}
+          style={{
+            rootOptions: { backgroundColor: colors.commandMenuBackground },
+            wrapperOptions: { backgroundColor: colors.commandMenuBackground },
+            viewportOptions: { backgroundColor: colors.commandMenuBackground },
+            contentOptions: { backgroundColor: colors.commandMenuBackground },
+            scrollbarOptions: { visible: false },
+            verticalScrollbarOptions: { visible: false },
+            horizontalScrollbarOptions: { visible: false },
+          }}
+        >
+          <box flexDirection="column">
+            {commands.length > 0 ? (
+              commands.map((command, index) => {
+                const selected = index === selectedIndex;
+
+                return (
+                  // biome-ignore lint/a11y/noStaticElementInteractions: OpenTUI box rows are the interactive menu primitive here.
+                  <box
+                    key={command.name}
+                    id={getCommandRowId(command.name)}
+                    flexDirection="row"
+                    justifyContent="space-between"
+                    paddingLeft={1}
+                    paddingRight={1}
+                    backgroundColor={
+                      selected
+                        ? colors.commandMenuSelectedBackground
+                        : colors.commandMenuBackground
+                    }
+                    onMouseMove={() => {
+                      onSelect(index);
+                    }}
+                    onMouseDown={(event) => {
+                      if (event.button !== 0) {
+                        return;
+                      }
+
+                      event.preventDefault();
+                      event.stopPropagation();
+                      onSelect(index);
+                      onExecute(command.name);
+                    }}
+                  >
+                    <text
+                      fg={
+                        selected
+                          ? colors.commandMenuSelectedText
+                          : colors.foregroundText
+                      }
+                    >
+                      /{command.name}
+                    </text>
+                    <text
+                      fg={
+                        selected
+                          ? colors.commandMenuSelectedText
+                          : colors.dimText
+                      }
+                    >
+                      {command.description}
+                    </text>
+                  </box>
+                );
+              })
+            ) : (
+              <box paddingLeft={1} paddingRight={1}>
+                <text fg={colors.mutedText}>No matching commands</text>
+              </box>
+            )}
+          </box>
+        </scrollbox>
+      </box>
+    </box>
+  );
+}
 
 type ComposerProps = {
   width: number | `${number}%`;
@@ -54,13 +192,12 @@ export function Composer({
   const [selectedSlashCommandIndex, setSelectedSlashCommandIndex] = useState(0);
 
   const matchingSlashCommands = useMemo(
-    () =>
-      getMatchingSlashCommands(slashMenuQuery ?? "").slice(
-        0,
-        COMMAND_MENU_MAX_ITEMS,
-      ),
+    () => getMatchingSlashCommands(slashMenuQuery ?? ""),
     [slashMenuQuery],
   );
+  const selectedSlashCommand =
+    matchingSlashCommands[selectedSlashCommandIndex] ??
+    matchingSlashCommands[0];
   const isSlashMenuOpen = slashMenuQuery !== null;
 
   const closeSlashMenu = () => {
@@ -95,24 +232,24 @@ export function Composer({
     });
   };
 
-  const selectSlashCommand = () => {
+  const executeSlashCommand = (commandName: SlashCommandName) => {
     const textarea = textareaRef.current;
-    const selectedSlashCommand =
-      matchingSlashCommands[selectedSlashCommandIndex] ??
-      matchingSlashCommands[0];
-    if (!textarea || !selectedSlashCommand) {
+    if (!textarea) {
       return;
     }
 
-    const replacement = replaceSlashCommandInput(
-      textarea.plainText,
-      selectedSlashCommand.name,
-    );
-
-    textarea.setText(replacement.text);
-    textarea.cursorOffset = replacement.cursorOffset;
+    textarea.clear();
     closeSlashMenu();
-    onDraftChange(replacement.text);
+    onDraftChange("");
+    onSubmit(`/${commandName}`);
+  };
+
+  const executeSelectedSlashCommand = () => {
+    if (!selectedSlashCommand) {
+      return;
+    }
+
+    executeSlashCommand(selectedSlashCommand.name);
   };
 
   useEffect(() => {
@@ -228,22 +365,9 @@ export function Composer({
         matchingSlashCommands.length > 0 &&
         (key.name === "return" || key.name === "tab")
       ) {
-        const selectedSlashCommand =
-          matchingSlashCommands[selectedSlashCommandIndex] ??
-          matchingSlashCommands[0];
-        const isExactSlashCommandMatch =
-          key.name === "return" &&
-          selectedSlashCommand !== undefined &&
-          textarea.plainText.trim() === `/${selectedSlashCommand.name}`;
-
-        if (isExactSlashCommandMatch) {
-          closeSlashMenu();
-          return;
-        }
-
         key.preventDefault();
         key.stopPropagation();
-        selectSlashCommand();
+        executeSelectedSlashCommand();
         return;
       }
     }
@@ -309,93 +433,58 @@ export function Composer({
   };
 
   return (
-    <box flexDirection="column" width={width} maxWidth="100%" gap={0}>
-      {isSlashMenuOpen ? (
+    <box
+      flexDirection="column"
+      width={width}
+      maxWidth="100%"
+      gap={0}
+      overflow="visible"
+    >
+      <box position="relative" width="100%" overflow="visible">
+        {isSlashMenuOpen ? (
+          <SlashCommandMenu
+            commands={matchingSlashCommands}
+            selectedIndex={selectedSlashCommandIndex}
+            onSelect={setSelectedSlashCommandIndex}
+            onExecute={executeSlashCommand}
+          />
+        ) : null}
         <box
           width="100%"
-          flexDirection="column"
-          backgroundColor={colors.commandMenuBackground}
-          border
-          borderColor={colors.commandMenuBorder}
-        >
-          {matchingSlashCommands.length > 0 ? (
-            matchingSlashCommands.map((command, index) => {
-              const selected = index === selectedSlashCommandIndex;
-
-              return (
-                <box
-                  key={command.name}
-                  flexDirection="row"
-                  justifyContent="space-between"
-                  paddingLeft={1}
-                  paddingRight={1}
-                  backgroundColor={
-                    selected
-                      ? colors.commandMenuSelectedBackground
-                      : colors.commandMenuBackground
-                  }
-                >
-                  <text
-                    fg={
-                      selected
-                        ? colors.commandMenuSelectedText
-                        : colors.foregroundText
-                    }
-                  >
-                    /{command.name}
-                  </text>
-                  <text
-                    fg={
-                      selected ? colors.commandMenuSelectedText : colors.dimText
-                    }
-                  >
-                    {command.description}
-                  </text>
-                </box>
-              );
-            })
-          ) : (
-            <box paddingLeft={1} paddingRight={1}>
-              <text fg={colors.mutedText}>No matching commands</text>
-            </box>
-          )}
-        </box>
-      ) : null}
-      <box
-        flexDirection="row"
-        width="100%"
-        minHeight={minHeight}
-        alignItems="stretch"
-      >
-        <box
-          flexGrow={1}
-          flexDirection="column"
-          backgroundColor={colors.composerBackground}
-          paddingLeft={1}
-          paddingRight={1}
-          paddingTop={COMPOSER_VERTICAL_PADDING}
-          paddingBottom={COMPOSER_VERTICAL_PADDING}
+          flexDirection="row"
           minHeight={minHeight}
-          justifyContent={justifyContent}
+          alignItems="stretch"
         >
-          <textarea
-            key={resetToken}
-            ref={textareaRef}
-            focused={focused}
-            placeholderColor={colors.mutedText}
-            initialValue={draft}
-            minHeight={1}
-            maxHeight={COMPOSER_MAX_TEXT_LINES}
+          <box
+            flexGrow={1}
+            flexDirection="column"
             backgroundColor={colors.composerBackground}
-            textColor={colors.foregroundText}
-            focusedBackgroundColor={colors.composerBackground}
-            focusedTextColor={colors.foregroundText}
-            wrapMode="word"
-            keyBindings={composerKeyBindings}
-            onKeyDown={handleKeyDown}
-            onContentChange={syncDraft}
-            onSubmit={submitDraft}
-          />
+            paddingLeft={1}
+            paddingRight={1}
+            paddingTop={COMPOSER_VERTICAL_PADDING}
+            paddingBottom={COMPOSER_VERTICAL_PADDING}
+            minHeight={minHeight}
+            justifyContent={justifyContent}
+          >
+            <textarea
+              key={resetToken}
+              ref={textareaRef}
+              focused={focused}
+              placeholderColor={colors.mutedText}
+              initialValue={draft}
+              minHeight={1}
+              maxHeight={COMPOSER_MAX_TEXT_LINES}
+              backgroundColor={colors.composerBackground}
+              textColor={colors.foregroundText}
+              focusedBackgroundColor={colors.composerBackground}
+              focusedTextColor={colors.foregroundText}
+              wrapMode="word"
+              keyBindings={composerKeyBindings}
+              onKeyDown={handleKeyDown}
+              onContentChange={syncDraft}
+              onSubmit={submitDraft}
+            />
+          </box>
         </box>
       </box>
 

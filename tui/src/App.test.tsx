@@ -3,11 +3,14 @@ import { SIDEBAR_LAYOUT_WIDTH } from "./session/layout";
 import { appLifecycle } from "./shared/lifecycle";
 import {
   areScrollbarsHidden,
+  captureRenderableGeometryByConstructorName,
   captureShellGeometry,
+  clickRenderable,
   findRenderableByConstructorName,
   findScrollbox,
   getComposerText,
   isSidebarVisible,
+  moveMouseToRenderable,
   pressCtrlC,
   pressCtrlN,
   pressDown,
@@ -21,6 +24,10 @@ import {
   typeText,
   withApp,
 } from "./test/appTestUtils";
+
+function slashCommandRowId(commandName: string) {
+  return `slash-command-item-${commandName}`;
+}
 
 test("renders the supersky TUI shell (new session)", async () => {
   await withApp((setup) => {
@@ -88,6 +95,27 @@ test("typing slash opens the command menu", async () => {
   });
 });
 
+test("opening the command menu does not move the welcome composer", async () => {
+  await withApp(async (setup) => {
+    const initialGeometry = captureRenderableGeometryByConstructorName(
+      setup.renderer.root,
+      "TextareaRenderable",
+    );
+
+    await typeText(setup, "/");
+    await settleScrollLayout(setup);
+
+    const settledGeometry = captureRenderableGeometryByConstructorName(
+      setup.renderer.root,
+      "TextareaRenderable",
+    );
+
+    expect(settledGeometry.x).toBe(initialGeometry.x);
+    expect(settledGeometry.y).toBe(initialGeometry.y);
+    expect(settledGeometry.height).toBe(initialGeometry.height);
+  });
+});
+
 test("the command menu filters as the slash query changes", async () => {
   await withApp(async (setup) => {
     await typeText(setup, "/m");
@@ -101,26 +129,61 @@ test("the command menu filters as the slash query changes", async () => {
   });
 });
 
-test("enter selects the highlighted slash command without submitting", async () => {
+test("enter executes the highlighted slash command directly", async () => {
   await withApp(async (setup) => {
     await typeText(setup, "/");
     await pressDown(setup);
     await pressDown(setup);
     await pressEnter(setup);
+    await settleScrollLayout(setup);
 
     const frame = setup.captureCharFrame();
 
-    expect(getComposerText(setup)).toBe("/settings ");
+    expect(frame).toContain("Settings screen not implemented yet.");
+    expect(getComposerText(setup)).toBe("");
     expect(frame).not.toContain("Assistant");
   });
 });
 
-test("tab selects the highlighted slash command", async () => {
+test("tab executes the highlighted slash command directly", async () => {
   await withApp(async (setup) => {
     await typeText(setup, "/m");
     await pressTab(setup);
+    await settleScrollLayout(setup);
 
-    expect(getComposerText(setup)).toBe("/model ");
+    const frame = setup.captureCharFrame();
+
+    expect(frame).toContain("Model picker not implemented yet.");
+    expect(getComposerText(setup)).toBe("");
+  });
+});
+
+test("hovering a command updates the highlighted selection", async () => {
+  await withApp(async (setup) => {
+    await typeText(setup, "/");
+    await settleScrollLayout(setup);
+    await moveMouseToRenderable(setup, slashCommandRowId("settings"));
+    await pressEnter(setup);
+    await settleScrollLayout(setup);
+
+    const frame = setup.captureCharFrame();
+
+    expect(frame).toContain("Settings screen not implemented yet.");
+    expect(getComposerText(setup)).toBe("");
+  });
+});
+
+test("clicking a command executes it directly", async () => {
+  await withApp(async (setup) => {
+    await typeText(setup, "/");
+    await settleScrollLayout(setup);
+    await clickRenderable(setup, slashCommandRowId("model"));
+    await settleScrollLayout(setup);
+
+    const frame = setup.captureCharFrame();
+
+    expect(frame).toContain("Model picker not implemented yet.");
+    expect(getComposerText(setup)).toBe("");
   });
 });
 
@@ -431,6 +494,28 @@ test("slash new resets an in-session view back to the welcome screen", async () 
     expect(frame).toContain("supersky");
     expect(frame).not.toContain("new session please");
     expect(frame).not.toContain("Assistant");
+  });
+});
+
+test("opening the command menu does not move the in-session composer", async () => {
+  await withApp(async (setup) => {
+    await sendMessages(setup, 1);
+    await settleScrollLayout(setup);
+
+    const initialGeometry = captureShellGeometry(setup.renderer.root);
+
+    await typeText(setup, "/");
+    await settleScrollLayout(setup);
+
+    const settledGeometry = captureShellGeometry(setup.renderer.root);
+
+    expect(settledGeometry.scrollboxX).toBe(initialGeometry.scrollboxX);
+    expect(settledGeometry.footerY).toBe(initialGeometry.footerY);
+    expect(settledGeometry.footerHeight).toBe(initialGeometry.footerHeight);
+    expect(settledGeometry.bodyHeight).toBe(initialGeometry.bodyHeight);
+    expect(settledGeometry.composerX).toBe(initialGeometry.composerX);
+    expect(settledGeometry.composerY).toBe(initialGeometry.composerY);
+    expect(settledGeometry.composerHeight).toBe(initialGeometry.composerHeight);
   });
 });
 

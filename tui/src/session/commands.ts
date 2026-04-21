@@ -139,23 +139,6 @@ export function parseSubmittedSlashCommand(input: string) {
   return findSlashCommand(commandName);
 }
 
-export function replaceSlashCommandInput(
-  input: string,
-  commandName: SlashCommandName,
-) {
-  const firstWhitespaceIndex = input.search(/\s/);
-  const nextText =
-    firstWhitespaceIndex === -1
-      ? `/${commandName} `
-      : `/${commandName}${input.slice(firstWhitespaceIndex)}`;
-
-  return {
-    text: nextText,
-    cursorOffset:
-      firstWhitespaceIndex === -1 ? nextText.length : `/${commandName}`.length,
-  };
-}
-
 export function isExitCommand(input: string) {
   return normalizeCommandInput(input) === EXIT_COMMAND;
 }

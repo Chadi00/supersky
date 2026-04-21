@@ -5,6 +5,7 @@ import { resolveProjectLine } from "./app/projectLine";
 
 const renderer = await createCliRenderer({
   exitOnCtrlC: false,
+  enableMouseMovement: true,
   targetFps: 60,
 });
 

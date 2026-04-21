@@ -11,7 +11,6 @@ import {
   NEW_SESSION_COMMAND,
   normalizeCommandInput,
   parseSubmittedSlashCommand,
-  replaceSlashCommandInput,
 } from "./commands";
 
 test("normalizes command input before matching", () => {
@@ -55,15 +54,4 @@ test("parses a submitted slash command from the first token", () => {
     NEW_SESSION_COMMAND,
   );
   expect(parseSubmittedSlashCommand("hello")).toBeNull();
-});
-
-test("replaces the leading slash command while preserving arguments", () => {
-  expect(replaceSlashCommandInput("/m", MODEL_COMMAND)).toEqual({
-    text: "/model ",
-    cursorOffset: 7,
-  });
-  expect(replaceSlashCommandInput("/m keep-this", MODEL_COMMAND)).toEqual({
-    text: "/model keep-this",
-    cursorOffset: 6,
-  });
 });

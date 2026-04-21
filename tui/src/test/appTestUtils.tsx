@@ -12,9 +12,11 @@ type TerminalSize = {
 
 type RenderableNode = {
   constructor?: { name?: string };
+  id?: string;
   getChildren?: () => unknown[];
   x?: number;
   y?: number;
+  width?: number;
   height?: number;
   plainText?: string;
   verticalScrollBar?: { visible: boolean };
@@ -24,6 +26,7 @@ type RenderableNode = {
 type GeometryNode = {
   x: number;
   y: number;
+  width: number;
   height: number;
   getChildren: () => unknown[];
 };
@@ -60,6 +63,7 @@ function expectGeometryNode(node: unknown, label: string): GeometryNode {
     !isRenderableNode(node) ||
     typeof node.x !== "number" ||
     typeof node.y !== "number" ||
+    typeof node.width !== "number" ||
     typeof node.height !== "number" ||
     typeof node.getChildren !== "function"
   ) {
@@ -140,6 +144,7 @@ export async function renderApp(
 ) {
   const setup = await testRender(<App projectLine={projectLine} />, {
     ...size,
+    enableMouseMovement: true,
     exitOnCtrlC: false,
   });
 
@@ -225,6 +230,74 @@ export async function pressEscape(setup: AppTestSetup) {
   });
 }
 
+export async function moveMouseToRenderable(
+  setup: AppTestSetup,
+  renderableId: string,
+) {
+  const node = expectGeometryNode(
+    findRenderableById(setup.renderer.root, renderableId),
+    renderableId,
+  );
+
+  await runInput(
+    setup,
+    () =>
+      setup.mockMouse.moveTo(
+        node.x + Math.max(0, Math.floor((node.width - 1) / 2)),
+        node.y + Math.max(0, Math.floor((node.height - 1) / 2)),
+      ),
+    {
+      renderPasses: 2,
+    },
+  );
+}
+
+export async function clickRenderable(
+  setup: AppTestSetup,
+  renderableId: string,
+) {
+  const node = expectGeometryNode(
+    findRenderableById(setup.renderer.root, renderableId),
+    renderableId,
+  );
+
+  await runInput(
+    setup,
+    () =>
+      setup.mockMouse.click(
+        node.x + Math.max(0, Math.floor((node.width - 1) / 2)),
+        node.y + Math.max(0, Math.floor((node.height - 1) / 2)),
+      ),
+    {
+      renderPasses: 3,
+    },
+  );
+}
+
+export async function scrollRenderable(
+  setup: AppTestSetup,
+  renderableId: string,
+  direction: "up" | "down" | "left" | "right",
+) {
+  const node = expectGeometryNode(
+    findRenderableById(setup.renderer.root, renderableId),
+    renderableId,
+  );
+
+  await runInput(
+    setup,
+    () =>
+      setup.mockMouse.scroll(
+        node.x + Math.max(0, Math.floor((node.width - 1) / 2)),
+        node.y + Math.max(0, Math.floor((node.height - 1) / 2)),
+        direction,
+      ),
+    {
+      renderPasses: 2,
+    },
+  );
+}
+
 export async function sendMessages(
   setup: AppTestSetup,
   count: number,
@@ -267,6 +340,38 @@ export function findRenderableByConstructorName(
     node,
     (candidate) => candidate.constructor?.name === constructorName,
   );
+}
+
+export function findRenderableById(node: unknown, id: string) {
+  return findRenderable(node, (candidate) => candidate.id === id);
+}
+
+export function captureRenderableGeometryByConstructorName(
+  node: unknown,
+  constructorName: string,
+) {
+  const renderable = expectGeometryNode(
+    findRenderableByConstructorName(node, constructorName),
+    constructorName,
+  );
+
+  return {
+    x: renderable.x,
+    y: renderable.y,
+    width: renderable.width,
+    height: renderable.height,
+  };
+}
+
+export function captureRenderableGeometryById(node: unknown, id: string) {
+  const renderable = expectGeometryNode(findRenderableById(node, id), id);
+
+  return {
+    x: renderable.x,
+    y: renderable.y,
+    width: renderable.width,
+    height: renderable.height,
+  };
 }
 
 export function areScrollbarsHidden(scrollbox: ScrollboxNode | null) {
@@ -312,6 +417,10 @@ export function captureShellGeometry(root: unknown) {
   );
   const sidebarNode = sessionLayout.getChildren()[1];
   const scrollbox = expectGeometryNode(findScrollbox(root), "scrollbox");
+  const composer = expectGeometryNode(
+    findRenderableByConstructorName(root, "TextareaRenderable"),
+    "composer textarea",
+  );
   const sidebar = sidebarNode
     ? expectGeometryNode(sidebarNode, "session sidebar")
     : null;
@@ -321,6 +430,9 @@ export function captureShellGeometry(root: unknown) {
     footerY: footer.y,
     footerHeight: footer.height,
     bodyHeight: body.height,
+    composerX: composer.x,
+    composerY: composer.y,
+    composerHeight: composer.height,
     mainBottom: mainPanel.y + mainPanel.height,
     sidebarBottom: sidebar ? sidebar.y + sidebar.height : null,
   };
