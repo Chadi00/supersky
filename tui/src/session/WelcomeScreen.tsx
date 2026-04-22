@@ -8,7 +8,6 @@ type WelcomeScreenProps = {
   bannerText: string;
   composerWidth: number;
   draft: string;
-  commandNotice: string | null;
   dismissComposerMenuToken: number;
   onComposerMenuOpenChange: (open: boolean) => void;
   resetToken: number;
@@ -23,13 +22,13 @@ type WelcomeScreenProps = {
   onCommandPickerSelect: (itemId: string) => void;
   composerRef: RefObject<ComposerHandle | null>;
   onSurfaceMouseDown: () => void;
+  composerFocused: boolean;
 };
 
 export function WelcomeScreen({
   bannerText,
   composerWidth,
   draft,
-  commandNotice,
   dismissComposerMenuToken,
   onComposerMenuOpenChange,
   resetToken,
@@ -44,6 +43,7 @@ export function WelcomeScreen({
   onCommandPickerSelect,
   composerRef,
   onSurfaceMouseDown,
+  composerFocused,
 }: WelcomeScreenProps) {
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: Welcome chrome clicks refocus the composer textarea.
@@ -71,7 +71,6 @@ export function WelcomeScreen({
         ref={composerRef}
         width={composerWidth}
         draft={draft}
-        commandNotice={commandNotice}
         dismissComposerMenuToken={dismissComposerMenuToken}
         onComposerMenuOpenChange={onComposerMenuOpenChange}
         resetToken={resetToken}
@@ -84,7 +83,7 @@ export function WelcomeScreen({
         commandPickerState={commandPickerState}
         onCommandPickerClose={onCommandPickerClose}
         onCommandPickerSelect={onCommandPickerSelect}
-        focused
+        focused={composerFocused}
         minHeight={3}
       />
     </box>

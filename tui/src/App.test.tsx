@@ -1,6 +1,7 @@
-import { expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { getCommandPickerRowId } from "./session/commandPicker";
 import { SIDEBAR_LAYOUT_WIDTH } from "./session/layout";
+import * as browser from "./session/providerState/browser";
 import { appLifecycle } from "./shared/lifecycle";
 import {
   areScrollbarsHidden,
@@ -27,10 +28,23 @@ import {
   typeText,
   withApp,
 } from "./test/appTestUtils";
+import { createFakeSessionServices } from "./test/fakeSessionServices";
 
 function slashCommandRowId(commandName: string) {
   return `slash-command-item-${commandName}`;
 }
+
+let openUrlSpy: ReturnType<typeof spyOn<typeof browser, "openUrlInBrowser">>;
+
+beforeEach(() => {
+  // Auth tests trigger browser-launch callbacks; stub them so the suite never
+  // leaves real browser windows behind.
+  openUrlSpy = spyOn(browser, "openUrlInBrowser").mockImplementation(() => {});
+});
+
+afterEach(() => {
+  openUrlSpy.mockRestore();
+});
 
 test("renders the supersky TUI shell (new session)", async () => {
   await withApp((setup) => {
@@ -102,7 +116,8 @@ test("typing slash opens the command menu", async () => {
 
     const frame = setup.captureCharFrame();
 
-    expect(frame).toContain("/provider");
+    expect(frame).toContain("/login");
+    expect(frame).toContain("/logout");
     expect(frame).toContain("/model");
     expect(frame).toContain("/settings");
     expect(frame).toContain("/new");
@@ -139,7 +154,7 @@ test("the command menu filters as the slash query changes", async () => {
     const frame = setup.captureCharFrame();
 
     expect(frame).toContain("/model");
-    expect(frame).not.toContain("/provider");
+    expect(frame).not.toContain("/login");
     expect(frame).not.toContain("/settings");
   });
 });
@@ -154,7 +169,7 @@ test("enter executes the highlighted slash command directly", async () => {
 
     const frame = setup.captureCharFrame();
 
-    expect(frame).toContain("Settings screen not implemented yet.");
+    expect(frame).toContain("No models available. Use /login or set an API");
     expect(getComposerText(setup)).toBe("");
     expect(frame).not.toContain("Assistant");
   });
@@ -168,7 +183,7 @@ test("tab executes the highlighted slash command directly", async () => {
 
     const frame = setup.captureCharFrame();
 
-    expect(frame).toContain("Connect a provider with /provider first.");
+    expect(frame).toContain("No models available. Use /login or set an API");
     expect(getComposerText(setup)).toBe("");
   });
 });
@@ -197,44 +212,44 @@ test("clicking a command executes it directly", async () => {
 
     const frame = setup.captureCharFrame();
 
-    expect(frame).toContain("Connect a provider with /provider first.");
+    expect(frame).toContain("No models available. Use /login or set an API");
     expect(getComposerText(setup)).toBe("");
   });
 });
 
-test("submitting /provider opens the provider picker", async () => {
+test("submitting /login opens the provider picker", async () => {
   await withApp(async (setup) => {
-    await submitText(setup, "/provider");
+    await submitText(setup, "/login");
     await settleScrollLayout(setup);
 
     const frame = setup.captureCharFrame();
 
-    expect(frame).toContain("Select provider to connect");
-    expect(frame).toContain("GitHub Copilot");
     expect(frame).toContain("Anthropic (Claude Pro/Max)");
+    expect(frame).toContain("GitHub Copilot");
     expect(getComposerText(setup)).toBe("");
   });
 });
 
-test("submitting /provider after dismissing the slash menu with escape opens the provider picker", async () => {
+test("submitting /login after dismissing the slash menu with escape opens the provider picker", async () => {
   await withApp(async (setup) => {
     await typeText(setup, "/");
     await pressEscape(setup);
-    await typeText(setup, "provider");
+    await settleScrollLayout(setup);
+    await typeText(setup, "login");
     await pressEnter(setup);
     await settleScrollLayout(setup);
 
     const frame = setup.captureCharFrame();
 
-    expect(frame).toContain("Select provider to connect");
+    expect(frame).toContain("Select provider to login");
     expect(frame).toContain("GitHub Copilot");
     expect(getComposerText(setup)).toBe("");
   });
 });
 
-test("selecting a provider connects it and updates the footer", async () => {
+test("selecting a provider logs in and updates the footer", async () => {
   await withApp(async (setup) => {
-    await submitText(setup, "/provider");
+    await submitText(setup, "/login");
     await clickRenderable(
       setup,
       getCommandPickerRowId("provider", "anthropic"),
@@ -243,20 +258,46 @@ test("selecting a provider connects it and updates the footer", async () => {
 
     const frame = setup.captureCharFrame();
 
-    expect(frame).toContain("Claude Opus 4.6");
+    expect(frame).toContain("claude-opus-4-6");
   });
 });
 
 test("the provider picker supports keyboard navigation", async () => {
   await withApp(async (setup) => {
-    await submitText(setup, "/provider");
+    await submitText(setup, "/login");
     await pressDown(setup);
     await pressEnter(setup);
     await settleScrollLayout(setup);
 
     const frame = setup.captureCharFrame();
 
-    expect(frame).toContain("GPT-4.1");
+    expect(frame).toContain("gpt-4o");
+  });
+});
+
+test("manual login providers show the login dialog and accept callback input", async () => {
+  await withApp(async (setup) => {
+    await submitText(setup, "/login");
+    await clickRenderable(
+      setup,
+      getCommandPickerRowId("provider", "openai-codex"),
+    );
+    await settleScrollLayout(setup);
+
+    let frame = setup.captureCharFrame();
+
+    expect(frame).toContain("Login to ChatGPT Plus/Pro (Codex Subscription)");
+    expect(frame).toContain("https://auth.example.test/openai-codex");
+
+    await submitText(
+      setup,
+      "http://localhost:1455/auth/callback?code=ok&state=test",
+    );
+    await settleScrollLayout(setup);
+
+    frame = setup.captureCharFrame();
+
+    expect(frame).toContain("gpt-5.4");
   });
 });
 
@@ -267,15 +308,15 @@ test("submitting /model shows an empty state until a provider is connected", asy
 
     const frame = setup.captureCharFrame();
 
-    expect(frame).toContain("Connect a provider with /provider first.");
+    expect(frame).toContain("No models available. Use /login or set an API");
     expect(frame).toContain("Select model");
     expect(frame).not.toContain("Assistant");
   });
 });
 
-test("the model picker only shows models for the active provider", async () => {
+test("the model picker only shows models for authenticated providers", async () => {
   await withApp(async (setup) => {
-    await submitText(setup, "/provider");
+    await submitText(setup, "/login");
     await clickRenderable(
       setup,
       getCommandPickerRowId("provider", "anthropic"),
@@ -287,15 +328,15 @@ test("the model picker only shows models for the active provider", async () => {
 
     const frame = setup.captureCharFrame();
 
-    expect(frame).toContain("Select model for Anthropic (Claude Pro/Max)");
-    expect(frame).toContain("Claude Sonnet 4.5");
-    expect(frame).not.toContain("GPT-5.4 Mini");
+    expect(frame).toContain("Select model");
+    expect(frame).toContain("claude-sonnet-4-5");
+    expect(frame).not.toContain("gpt-5.4-mini");
   });
 });
 
 test("submitting /model after dismissing the slash menu with escape opens the model picker", async () => {
   await withApp(async (setup) => {
-    await submitText(setup, "/provider");
+    await submitText(setup, "/login");
     await clickRenderable(
       setup,
       getCommandPickerRowId("provider", "anthropic"),
@@ -310,34 +351,40 @@ test("submitting /model after dismissing the slash menu with escape opens the mo
 
     const frame = setup.captureCharFrame();
 
-    expect(frame).toContain("Select model for Anthropic (Claude Pro/Max)");
+    expect(frame).toContain("Select model");
     expect(getComposerText(setup)).toBe("");
   });
 });
 
 test("selecting a model updates the footer", async () => {
   await withApp(async (setup) => {
-    await submitText(setup, "/provider");
-    await clickRenderable(setup, getCommandPickerRowId("provider", "google"));
+    await submitText(setup, "/login");
+    await clickRenderable(
+      setup,
+      getCommandPickerRowId("provider", "google-gemini-cli"),
+    );
     await settleScrollLayout(setup);
 
     await submitText(setup, "/model");
     await clickRenderable(
       setup,
-      getCommandPickerRowId("model", "gemini-2-5-flash"),
+      getCommandPickerRowId("model", "google-gemini-cli/gemini-2.5-flash"),
     );
     await settleScrollLayout(setup);
 
     const frame = setup.captureCharFrame();
 
-    expect(frame).toContain("Gemini 2.5 Flash");
+    expect(frame).toContain("gemini-2.5-flash");
   });
 });
 
 test("the model picker supports keyboard navigation", async () => {
   await withApp(async (setup) => {
-    await submitText(setup, "/provider");
-    await clickRenderable(setup, getCommandPickerRowId("provider", "google"));
+    await submitText(setup, "/login");
+    await clickRenderable(
+      setup,
+      getCommandPickerRowId("provider", "google-gemini-cli"),
+    );
     await settleScrollLayout(setup);
 
     await submitText(setup, "/model");
@@ -347,13 +394,13 @@ test("the model picker supports keyboard navigation", async () => {
 
     const frame = setup.captureCharFrame();
 
-    expect(frame).toContain("Gemini 2.5 Flash");
+    expect(frame).toContain("gemini-2.5-flash");
   });
 });
 
 test("/model with an exact match switches immediately", async () => {
   await withApp(async (setup) => {
-    await submitText(setup, "/provider");
+    await submitText(setup, "/login");
     await clickRenderable(
       setup,
       getCommandPickerRowId("provider", "anthropic"),
@@ -365,21 +412,24 @@ test("/model with an exact match switches immediately", async () => {
 
     const frame = setup.captureCharFrame();
 
-    expect(frame).toContain("Claude Haiku 4");
-    expect(frame).not.toContain("Select model for Anthropic (Claude Pro/Max)");
+    expect(frame).toContain("claude-haiku-4");
+    expect(frame).not.toContain("Select model");
   });
 });
 
 test("selected provider and model persist across /new", async () => {
   await withApp(async (setup) => {
-    await submitText(setup, "/provider");
-    await clickRenderable(setup, getCommandPickerRowId("provider", "google"));
+    await submitText(setup, "/login");
+    await clickRenderable(
+      setup,
+      getCommandPickerRowId("provider", "google-gemini-cli"),
+    );
     await settleScrollLayout(setup);
 
     await submitText(setup, "/model");
     await clickRenderable(
       setup,
-      getCommandPickerRowId("model", "gemini-2-5-flash"),
+      getCommandPickerRowId("model", "google-gemini-cli/gemini-2.5-flash"),
     );
     await settleScrollLayout(setup);
 
@@ -391,34 +441,72 @@ test("selected provider and model persist across /new", async () => {
 
     expect(frame).toContain("supersky");
     expect(frame).not.toContain("new session please");
-    expect(frame).toContain("Gemini 2.5 Flash");
+    expect(frame).toContain("gemini-2.5-flash");
   });
 });
 
-test("switching back to a connected provider restores its previous model", async () => {
+test("selected provider and model persist across app restarts", async () => {
+  const sharedServices = createFakeSessionServices();
+
+  await withApp(
+    async (setup) => {
+      await submitText(setup, "/login");
+      await clickRenderable(
+        setup,
+        getCommandPickerRowId("provider", "google-gemini-cli"),
+      );
+      await settleScrollLayout(setup);
+
+      await submitText(setup, "/model");
+      await clickRenderable(
+        setup,
+        getCommandPickerRowId("model", "google-gemini-cli/gemini-2.5-flash"),
+      );
+      await settleScrollLayout(setup);
+
+      expect(setup.captureCharFrame()).toContain("gemini-2.5-flash");
+    },
+    { width: 110, height: 30 },
+    "~/projects/supersky:main",
+    sharedServices,
+  );
+
+  await withApp(
+    (setup) => {
+      expect(setup.captureCharFrame()).toContain("gemini-2.5-flash");
+    },
+    { width: 110, height: 30 },
+    "~/projects/supersky:main",
+    sharedServices,
+  );
+});
+
+test("logging into another provider keeps the current model selected", async () => {
   await withApp(async (setup) => {
-    await submitText(setup, "/provider");
-    await clickRenderable(setup, getCommandPickerRowId("provider", "google"));
+    await submitText(setup, "/login");
+    await clickRenderable(
+      setup,
+      getCommandPickerRowId("provider", "google-gemini-cli"),
+    );
     await settleScrollLayout(setup);
 
     await submitText(setup, "/model");
     await clickRenderable(
       setup,
-      getCommandPickerRowId("model", "gemini-2-5-flash"),
+      getCommandPickerRowId("model", "google-gemini-cli/gemini-2.5-flash"),
     );
     await settleScrollLayout(setup);
 
-    await submitText(setup, "/provider");
-    await clickRenderable(setup, getCommandPickerRowId("provider", "copilot"));
-    await settleScrollLayout(setup);
-
-    await submitText(setup, "/provider");
-    await clickRenderable(setup, getCommandPickerRowId("provider", "google"));
+    await submitText(setup, "/login");
+    await clickRenderable(
+      setup,
+      getCommandPickerRowId("provider", "github-copilot"),
+    );
     await settleScrollLayout(setup);
 
     const frame = setup.captureCharFrame();
 
-    expect(frame).toContain("Gemini 2.5 Flash");
+    expect(frame).toContain("gemini-2.5-flash");
   });
 });
 
@@ -428,7 +516,7 @@ test("typing past the slash command token closes the menu", async () => {
 
     const frame = setup.captureCharFrame();
 
-    expect(frame).not.toContain("/provider");
+    expect(frame).not.toContain("/login");
   });
 });
 

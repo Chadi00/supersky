@@ -6,8 +6,10 @@ import { copyToClipboard } from "./app/clipboard";
 import { copySelection } from "./app/copySelection";
 import { Toast, ToastProvider, useToast } from "./app/Toast";
 import { Composer, type ComposerHandle } from "./session/Composer";
+import { LoginDialog } from "./session/LoginDialog";
 import { deriveSessionLayout } from "./session/layout";
 import { MessageList } from "./session/MessageList";
+import type { SessionServices } from "./session/providerState/services";
 import { SessionSidebar } from "./session/SessionSidebar";
 import { useSessionController } from "./session/useSessionController";
 import { WelcomeScreen } from "./session/WelcomeScreen";
@@ -15,6 +17,7 @@ import { colors } from "./shared/theme";
 
 type AppProps = {
   projectLine: string;
+  services?: SessionServices;
 };
 
 export function App(props: AppProps) {
@@ -25,7 +28,7 @@ export function App(props: AppProps) {
   );
 }
 
-function AppContent({ projectLine }: AppProps) {
+function AppContent({ projectLine, services }: AppProps) {
   const { width } = useTerminalDimensions();
   const renderer = useRenderer();
   const toast = useToast();
@@ -42,12 +45,22 @@ function AppContent({ projectLine }: AppProps) {
     showPreviousHistory,
     showNextHistory,
     activeModel,
+    availableProviderCount,
     commandPickerState,
     closeCommandPicker,
     selectCommandPickerItem,
-  } = useSessionController();
+    loginDialogState,
+    setLoginDialogInputValue,
+    submitLoginDialogInput,
+    cancelLoginDialog,
+  } = useSessionController(services);
   const layout = deriveSessionLayout(width, isNewSession);
   const composerRef = useRef<ComposerHandle>(null);
+  const modelLabel = activeModel
+    ? availableProviderCount > 1
+      ? `(${activeModel.provider}) ${activeModel.id}`
+      : activeModel.id
+    : null;
   const focusComposer = useCallback(() => {
     composerRef.current?.focus();
   }, []);
@@ -74,6 +87,14 @@ function AppContent({ projectLine }: AppProps) {
     copySelection(renderer, toast);
   }, [renderer, toast]);
 
+  useEffect(() => {
+    if (!commandNotice) {
+      return;
+    }
+
+    toast.show({ message: commandNotice, variant: "info" });
+  }, [commandNotice, toast]);
+
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: Copy-on-mouse-up for terminal selection (OpenCode pattern).
     <box
@@ -89,7 +110,6 @@ function AppContent({ projectLine }: AppProps) {
             bannerText={layout.welcomeBannerText}
             composerWidth={layout.welcomeComposerWidth}
             draft={state.draft}
-            commandNotice={commandNotice}
             dismissComposerMenuToken={dismissComposerMenuToken}
             onComposerMenuOpenChange={setComposerMenuOpen}
             resetToken={state.composerResetToken}
@@ -104,6 +124,7 @@ function AppContent({ projectLine }: AppProps) {
             onCommandPickerSelect={selectCommandPickerItem}
             composerRef={composerRef}
             onSurfaceMouseDown={focusComposer}
+            composerFocused={loginDialogState === null}
           />
         ) : (
           <box
@@ -134,7 +155,6 @@ function AppContent({ projectLine }: AppProps) {
                   ref={composerRef}
                   width="100%"
                   draft={state.draft}
-                  commandNotice={null}
                   dismissComposerMenuToken={dismissComposerMenuToken}
                   onComposerMenuOpenChange={setComposerMenuOpen}
                   resetToken={state.composerResetToken}
@@ -147,7 +167,7 @@ function AppContent({ projectLine }: AppProps) {
                   commandPickerState={commandPickerState}
                   onCommandPickerClose={closeCommandPicker}
                   onCommandPickerSelect={selectCommandPickerItem}
-                  focused
+                  focused={loginDialogState === null}
                 />
               </box>
             </box>
@@ -164,9 +184,18 @@ function AppContent({ projectLine }: AppProps) {
       <AppFooter
         isNewSession={isNewSession}
         projectLine={projectLine}
-        modelName={activeModel?.name ?? null}
+        modelName={modelLabel}
         onMouseDown={focusComposer}
       />
+
+      {loginDialogState ? (
+        <LoginDialog
+          state={loginDialogState}
+          onInputChange={setLoginDialogInputValue}
+          onSubmit={submitLoginDialogInput}
+          onCancel={cancelLoginDialog}
+        />
+      ) : null}
 
       <Toast />
     </box>

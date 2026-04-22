@@ -1,13 +1,15 @@
 import type { KeyBinding } from "@opentui/core";
 
-export const PROVIDER_COMMAND = "provider";
+export const LOGIN_COMMAND = "login";
+export const LOGOUT_COMMAND = "logout";
 export const MODEL_COMMAND = "model";
 export const SETTINGS_COMMAND = "settings";
 export const NEW_SESSION_COMMAND = "new";
 export const EXIT_COMMAND = "exit";
 
 export type SlashCommandName =
-  | typeof PROVIDER_COMMAND
+  | typeof LOGIN_COMMAND
+  | typeof LOGOUT_COMMAND
   | typeof MODEL_COMMAND
   | typeof SETTINGS_COMMAND
   | typeof NEW_SESSION_COMMAND
@@ -25,12 +27,16 @@ export type SubmittedSlashCommand = {
 
 const slashCommands: SlashCommand[] = [
   {
-    name: PROVIDER_COMMAND,
-    description: "Switch provider",
+    name: LOGIN_COMMAND,
+    description: "Connect a provider",
+  },
+  {
+    name: LOGOUT_COMMAND,
+    description: "Disconnect a provider",
   },
   {
     name: MODEL_COMMAND,
-    description: "Switch model",
+    description: "Change model",
   },
   {
     name: SETTINGS_COMMAND,
@@ -67,8 +73,11 @@ export function getSlashCommands() {
 
 export function findSlashCommand(name: string) {
   const normalized = normalizeCommandInput(name).replace(/^\//, "");
+  const canonicalName = normalized === "provider" ? LOGIN_COMMAND : normalized;
 
-  return slashCommands.find((command) => command.name === normalized) ?? null;
+  return (
+    slashCommands.find((command) => command.name === canonicalName) ?? null
+  );
 }
 
 export function getSlashMenuQuery(input: string, cursorOffset: number) {

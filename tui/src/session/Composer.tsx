@@ -310,7 +310,6 @@ function CommandPickerMenu({
 type ComposerProps = {
   width: number | `${number}%`;
   draft: string;
-  commandNotice: string | null;
   dismissComposerMenuToken: number;
   onComposerMenuOpenChange: (open: boolean) => void;
   resetToken: number;
@@ -337,7 +336,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
     {
       width,
       draft,
-      commandNotice,
       dismissComposerMenuToken,
       onComposerMenuOpenChange,
       resetToken,
@@ -784,11 +782,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
           </box>
         </box>
 
-        {commandNotice ? (
-          <box paddingLeft={1} paddingTop={0}>
-            <text fg={colors.warningText}>{commandNotice}</text>
-          </box>
-        ) : null}
       </box>
     );
   },

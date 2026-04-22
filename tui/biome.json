@@ -4,6 +4,7 @@
     "ignoreUnknown": true,
     "includes": [
       "src/**/*",
+      "!src/vendor/pi-ai",
       "package.json",
       "tsconfig.json",
       "README.md",

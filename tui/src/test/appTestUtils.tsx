@@ -2,6 +2,8 @@ import { testRender } from "@opentui/react/test-utils";
 import { act } from "react";
 
 import { App } from "../App";
+import type { SessionServices } from "../session/providerState/services";
+import { createFakeSessionServices } from "./fakeSessionServices";
 
 const DEFAULT_PROJECT_LINE = "~/projects/supersky:main";
 
@@ -141,12 +143,16 @@ async function destroyApp(setup: AppTestSetup) {
 export async function renderApp(
   size: TerminalSize = DEFAULT_TERMINAL_SIZE,
   projectLine = DEFAULT_PROJECT_LINE,
+  services: SessionServices = createFakeSessionServices(),
 ) {
-  const setup = await testRender(<App projectLine={projectLine} />, {
-    ...size,
-    enableMouseMovement: true,
-    exitOnCtrlC: false,
-  });
+  const setup = await testRender(
+    <App projectLine={projectLine} services={services} />,
+    {
+      ...size,
+      enableMouseMovement: true,
+      exitOnCtrlC: false,
+    },
+  );
 
   await runInput(setup, () => undefined);
 
@@ -157,9 +163,10 @@ export async function withApp(
   run: (setup: AppTestSetup) => Promise<void> | void,
   size: TerminalSize = DEFAULT_TERMINAL_SIZE,
   projectLine = DEFAULT_PROJECT_LINE,
+  services: SessionServices = createFakeSessionServices(),
 ) {
   return runAppTestSerial(async () => {
-    const setup = await renderApp(size, projectLine);
+    const setup = await renderApp(size, projectLine, services);
 
     try {
       await run(setup);
