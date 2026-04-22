@@ -277,6 +277,7 @@ function CommandPickerMenu({
 													: colors.foregroundText
 											}
 										>
+											{item.prefix ? `${item.prefix} ` : ""}
 											{item.label}
 										</text>
 										{item.meta ? (
@@ -488,7 +489,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
 			setSelectedCommandPickerIndex(
 				nextSelectedIndex >= 0 ? nextSelectedIndex : 0,
 			);
-		}, [commandPickerState]);
+		}, [
+			commandPickerState?.kind,
+			commandPickerState?.selectedItemId,
+			commandPickerState?.items.map((item) => item.id).join("\u0000"),
+		]);
 
 		// When the session dismisses a composer menu (e.g. Escape), the token increments.
 		// React only to token changes. Do not list `commandPickerState` here: with a

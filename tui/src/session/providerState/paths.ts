@@ -6,6 +6,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
+import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 
 export function getAgentDir() {
@@ -18,6 +19,41 @@ export function getAuthPath() {
 
 export function getSettingsPath() {
 	return join(getAgentDir(), "settings.json");
+}
+
+function normalizePath(path: string) {
+	return path.replace(/\/+$/, "") || "/";
+}
+
+export function resolveWorkspaceRoot(directory = process.cwd()) {
+	const result = Bun.spawnSync({
+		cmd: ["git", "rev-parse", "--show-toplevel"],
+		cwd: directory,
+		stdout: "pipe",
+		stderr: "pipe",
+	});
+	if (result.exitCode === 0) {
+		const root = Buffer.from(result.stdout).toString("utf8").trim();
+		if (root) {
+			return normalizePath(root);
+		}
+	}
+	return normalizePath(directory);
+}
+
+export function getWorkspaceId(workspaceRoot: string) {
+	return createHash("sha256")
+		.update(normalizePath(workspaceRoot))
+		.digest("hex")
+		.slice(0, 16);
+}
+
+export function getWorkspaceDir(workspaceRoot: string) {
+	return join(getAgentDir(), "workspaces", getWorkspaceId(workspaceRoot));
+}
+
+export function getSessionsDbPath(workspaceRoot: string) {
+	return join(getWorkspaceDir(workspaceRoot), "sessions.db");
 }
 
 function ensureParentDir(filePath: string) {

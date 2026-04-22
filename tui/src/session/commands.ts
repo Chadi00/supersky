@@ -3,6 +3,9 @@ import type { KeyBinding } from "@opentui/core";
 export const LOGIN_COMMAND = "login";
 export const LOGOUT_COMMAND = "logout";
 export const MODEL_COMMAND = "model";
+export const SESSIONS_COMMAND = "sessions";
+export const RENAME_COMMAND = "rename";
+export const DELETE_COMMAND = "delete";
 export const SETTINGS_COMMAND = "settings";
 export const NEW_SESSION_COMMAND = "new";
 export const EXIT_COMMAND = "exit";
@@ -11,6 +14,9 @@ export type SlashCommandName =
 	| typeof LOGIN_COMMAND
 	| typeof LOGOUT_COMMAND
 	| typeof MODEL_COMMAND
+	| typeof SESSIONS_COMMAND
+	| typeof RENAME_COMMAND
+	| typeof DELETE_COMMAND
 	| typeof SETTINGS_COMMAND
 	| typeof NEW_SESSION_COMMAND
 	| typeof EXIT_COMMAND;
@@ -37,6 +43,18 @@ const slashCommands: SlashCommand[] = [
 	{
 		name: MODEL_COMMAND,
 		description: "Change model",
+	},
+	{
+		name: SESSIONS_COMMAND,
+		description: "List and switch sessions",
+	},
+	{
+		name: RENAME_COMMAND,
+		description: "Rename current session",
+	},
+	{
+		name: DELETE_COMMAND,
+		description: "Delete current session",
 	},
 	{
 		name: SETTINGS_COMMAND,
@@ -73,7 +91,12 @@ export function getSlashCommands() {
 
 export function findSlashCommand(name: string) {
 	const normalized = normalizeCommandInput(name).replace(/^\//, "");
-	const canonicalName = normalized === "provider" ? LOGIN_COMMAND : normalized;
+	const canonicalName =
+		normalized === "provider"
+			? LOGIN_COMMAND
+			: normalized === "session"
+				? SESSIONS_COMMAND
+				: normalized;
 
 	return (
 		slashCommands.find((command) => command.name === canonicalName) ?? null

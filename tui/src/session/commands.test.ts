@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 
 import {
+	DELETE_COMMAND,
 	EXIT_COMMAND,
 	getMatchingSlashCommands,
 	getSlashMenuQuery,
@@ -11,6 +12,8 @@ import {
 	NEW_SESSION_COMMAND,
 	normalizeCommandInput,
 	parseSubmittedSlashCommand,
+	RENAME_COMMAND,
+	SESSIONS_COMMAND,
 } from "./commands";
 
 test("normalizes command input before matching", () => {
@@ -44,7 +47,19 @@ test("opens the slash menu only while the cursor is inside the leading token", (
 test("matches slash commands by prefix before description text", () => {
 	expect(getMatchingSlashCommands("m")[0]?.name).toBe(MODEL_COMMAND);
 	expect(getMatchingSlashCommands("session")[0]?.name).toBe(
-		NEW_SESSION_COMMAND,
+		SESSIONS_COMMAND,
+	);
+});
+
+test("supports session aliases and management commands", () => {
+	expect(parseSubmittedSlashCommand("/session")?.command.name).toBe(
+		SESSIONS_COMMAND,
+	);
+	expect(parseSubmittedSlashCommand("/rename now")?.command.name).toBe(
+		RENAME_COMMAND,
+	);
+	expect(parseSubmittedSlashCommand("/delete")?.command.name).toBe(
+		DELETE_COMMAND,
 	);
 });
 

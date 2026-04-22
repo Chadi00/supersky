@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import type { SuperskyToolDefinition } from "../agent/tools/types";
+import { BRAILLE_SPINNER_FRAMES } from "../shared/brailleSpinner";
 import { colors } from "../shared/theme";
 import type { AgentToolResult } from "../vendor/pi-agent-core/index.js";
 import type {
@@ -44,20 +45,6 @@ function getPreviewText(text: string, maxLines = 10) {
 	}
 	return `${lines.slice(0, maxLines).join("\n")}\n... (${lines.length - maxLines} more lines)`;
 }
-
-/** Braille spinner frames, matching pi-mono `Loader` (80ms per frame). */
-const BRAILLE_SPINNER_FRAMES = [
-	"⠋",
-	"⠙",
-	"⠹",
-	"⠸",
-	"⠼",
-	"⠴",
-	"⠦",
-	"⠧",
-	"⠇",
-	"⠏",
-] as const;
 
 export function AssistantStreamingIndicator() {
 	const [frameIndex, setFrameIndex] = useState(0);

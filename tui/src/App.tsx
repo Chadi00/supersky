@@ -10,6 +10,7 @@ import { LoginDialog } from "./session/LoginDialog";
 import { deriveSessionLayout } from "./session/layout";
 import { MessageList } from "./session/MessageList";
 import type { SessionServices } from "./session/providerState/services";
+import { SessionRenameDialog } from "./session/SessionRenameDialog";
 import { SessionSidebar } from "./session/SessionSidebar";
 import { useSessionController } from "./session/useSessionController";
 import { WelcomeScreen } from "./session/WelcomeScreen";
@@ -44,6 +45,7 @@ function AppContent({ projectLine, services }: AppProps) {
 		submit,
 		showPreviousHistory,
 		showNextHistory,
+		sessionTitle,
 		activeModel,
 		toolDefinitions,
 		availableProviderCount,
@@ -54,9 +56,15 @@ function AppContent({ projectLine, services }: AppProps) {
 		setLoginDialogInputValue,
 		submitLoginDialogInput,
 		cancelLoginDialog,
+		sessionRenameDialogState,
+		setSessionRenameValue,
+		submitSessionRename,
+		cancelSessionRename,
 	} = useSessionController(services);
 	const layout = deriveSessionLayout(width, isNewSession);
 	const composerRef = useRef<ComposerHandle>(null);
+	const hasModalOpen =
+		loginDialogState !== null || sessionRenameDialogState !== null;
 	const modelLabel = activeModel
 		? availableProviderCount > 1
 			? `(${activeModel.provider}) ${activeModel.id}`
@@ -125,7 +133,7 @@ function AppContent({ projectLine, services }: AppProps) {
 						onCommandPickerSelect={selectCommandPickerItem}
 						composerRef={composerRef}
 						onSurfaceMouseDown={focusComposer}
-						composerFocused={loginDialogState === null}
+						composerFocused={!hasModalOpen}
 					/>
 				) : (
 					<box
@@ -172,14 +180,17 @@ function AppContent({ projectLine, services }: AppProps) {
 									commandPickerState={commandPickerState}
 									onCommandPickerClose={closeCommandPicker}
 									onCommandPickerSelect={selectCommandPickerItem}
-									focused={loginDialogState === null}
+									focused={!hasModalOpen}
 								/>
 							</box>
 						</box>
 
 						{layout.showSidebar ? (
 							<box width={layout.sidebarWidth} flexShrink={0} minHeight={0}>
-								<SessionSidebar onMouseDown={focusComposer} />
+								<SessionSidebar
+									sessionTitle={sessionTitle}
+									onMouseDown={focusComposer}
+								/>
 							</box>
 						) : null}
 					</box>
@@ -199,6 +210,15 @@ function AppContent({ projectLine, services }: AppProps) {
 					onInputChange={setLoginDialogInputValue}
 					onSubmit={submitLoginDialogInput}
 					onCancel={cancelLoginDialog}
+				/>
+			) : null}
+
+			{sessionRenameDialogState ? (
+				<SessionRenameDialog
+					state={sessionRenameDialogState}
+					onInputChange={setSessionRenameValue}
+					onSubmit={submitSessionRename}
+					onCancel={cancelSessionRename}
 				/>
 			) : null}
 

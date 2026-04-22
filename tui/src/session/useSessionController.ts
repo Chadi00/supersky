@@ -1,10 +1,15 @@
 import { useKeyboard, useRenderer } from "@opentui/react";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { type AgentRuntimeLike, SuperskyAgentRuntime } from "../agent/runtime";
+import { BRAILLE_SPINNER_FRAMES } from "../shared/brailleSpinner";
 import { destroyRendererAndExit } from "../shared/lifecycle";
-import type { AgentEvent } from "../vendor/pi-agent-core/index.js";
+import type {
+	AgentEvent,
+	AgentMessage,
+} from "../vendor/pi-agent-core/index.js";
 import type { CommandPickerState } from "./commandPicker";
 import {
+	DELETE_COMMAND,
 	EXIT_COMMAND,
 	isExitCommand,
 	isExitShortcut,
@@ -14,9 +19,12 @@ import {
 	MODEL_COMMAND,
 	NEW_SESSION_COMMAND,
 	parseSubmittedSlashCommand,
+	RENAME_COMMAND,
+	SESSIONS_COMMAND,
 	SETTINGS_COMMAND,
 } from "./commands";
 import type { LoginDialogLineTone, LoginDialogState } from "./LoginDialog";
+import type { SessionRenameDialogState } from "./SessionRenameDialog";
 import { openUrlInBrowser } from "./providerState/browser";
 import {
 	defaultModelPerProvider,
@@ -39,11 +47,20 @@ import { createInitialSessionState, type ToolExecutionState } from "./types";
 
 type ActivePickerState =
 	| { kind: "provider"; mode: "login" | "logout" }
-	| { kind: "model"; query: string };
+	| { kind: "model"; query: string }
+	| { kind: "sessions" };
 
 type PendingLoginInput = {
 	resolve: (value: string) => void;
 	reject: (error: Error) => void;
+};
+
+type SessionRuntimeEntry = {
+	id: string;
+	title: string;
+	runtime: AgentRuntimeLike;
+	toolExecutions: Map<string, ToolExecutionState>;
+	unsubscribe: () => void;
 };
 
 function getModelPickerItemId(model: Model<Api>) {
@@ -139,6 +156,14 @@ function getAvailableProviderCount(services: SessionServices) {
 	).size;
 }
 
+function formatRelativeTime(timestamp: number) {
+	const delta = Date.now() - timestamp;
+	if (delta < 60_000) return "just now";
+	if (delta < 3_600_000) return `${Math.floor(delta / 60_000)}m ago`;
+	if (delta < 86_400_000) return `${Math.floor(delta / 3_600_000)}h ago`;
+	return `${Math.floor(delta / 86_400_000)}d ago`;
+}
+
 function createRuntimeSnapshot(
 	runtime: AgentRuntimeLike,
 	toolExecutions: Map<string, ToolExecutionState>,
@@ -164,17 +189,23 @@ export function useSessionController(providedServices?: SessionServices) {
 	}
 	const services = servicesRef.current;
 	const runtimeRef = useRef<AgentRuntimeLike | null>(null);
-	const runtimeUnsubscribeRef = useRef<(() => void) | null>(null);
-	const toolExecutionsRef = useRef<Map<string, ToolExecutionState>>(new Map());
+	const sessionsRef = useRef<Map<string, SessionRuntimeEntry>>(new Map());
 	const composerMenuOpenRef = useRef(false);
 	const pendingLoginInputRef = useRef<PendingLoginInput | null>(null);
 	const loginAbortControllerRef = useRef<AbortController | null>(null);
 	const loginLineIdRef = useRef(0);
 	const [commandNotice, setCommandNotice] = useState<string | null>(null);
 	const [dismissComposerMenuToken, setDismissComposerMenuToken] = useState(0);
+	const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
 	const [activePicker, setActivePicker] = useState<ActivePickerState | null>(
 		null,
 	);
+	const [sessionPickerFrameIndex, setSessionPickerFrameIndex] = useState(0);
+	const [pendingDeleteSessionId, setPendingDeleteSessionId] = useState<
+		string | null
+	>(null);
+	const [sessionRenameDialogState, setSessionRenameDialogState] =
+		useState<SessionRenameDialogState | null>(null);
 	const [loginDialogState, setLoginDialogState] =
 		useState<LoginDialogState | null>(null);
 	const [activeModel, setActiveModel] = useState<Model<Api> | null>(() => {
@@ -196,13 +227,17 @@ export function useSessionController(providedServices?: SessionServices) {
 	const activePickerRef = useRef<ActivePickerState | null>(null);
 	const activeModelRef = useRef<Model<Api> | null>(activeModel);
 	const loginDialogStateRef = useRef<LoginDialogState | null>(loginDialogState);
+	const activeSessionIdRef = useRef<string | null>(activeSessionId);
 
 	activePickerRef.current = activePicker;
 	activeModelRef.current = activeModel;
 	loginDialogStateRef.current = loginDialogState;
+	activeSessionIdRef.current = activeSessionId;
 
 	const syncRuntimeState = useCallback(() => {
 		const runtime = runtimeRef.current;
+		const sessionId = activeSessionIdRef.current;
+		const activeEntry = sessionId ? sessionsRef.current.get(sessionId) : null;
 		if (!runtime) {
 			dispatch({
 				type: "runtimeStateReplaced",
@@ -216,11 +251,107 @@ export function useSessionController(providedServices?: SessionServices) {
 		}
 		dispatch({
 			type: "runtimeStateReplaced",
-			...createRuntimeSnapshot(runtime, toolExecutionsRef.current),
+			...createRuntimeSnapshot(runtime, activeEntry?.toolExecutions ?? new Map()),
 		});
 	}, []);
 
-	const ensureRuntime = useCallback(
+	const buildSessionRuntime = useCallback(
+		(
+			sessionId: string,
+			model: Model<Api> | null,
+			initialMessages?: AgentMessage[],
+		) => {
+			const runtime =
+				services.createRuntime?.(model) ??
+				(model
+					? new SuperskyAgentRuntime({
+							authStorage: services.authStorage,
+							model,
+							sessionId,
+							initialMessages: initialMessages ?? [],
+						})
+					: null);
+			if (!runtime) {
+				return null;
+			}
+			const toolExecutions = new Map<string, ToolExecutionState>();
+			const unsubscribe = runtime.subscribe((event: AgentEvent) => {
+				switch (event.type) {
+					case "tool_execution_start": {
+						const previous = toolExecutions.get(event.toolCallId);
+						toolExecutions.set(event.toolCallId, {
+							toolCallId: event.toolCallId,
+							toolName: event.toolName,
+							args: event.args,
+							status: "running",
+							result: previous?.result,
+							isError: previous?.isError,
+						});
+						break;
+					}
+					case "tool_execution_update": {
+						toolExecutions.set(event.toolCallId, {
+							toolCallId: event.toolCallId,
+							toolName: event.toolName,
+							args: event.args,
+							status: "running",
+							result: event.partialResult,
+							isError: false,
+						});
+						break;
+					}
+					case "tool_execution_end": {
+						toolExecutions.set(event.toolCallId, {
+							toolCallId: event.toolCallId,
+							toolName: event.toolName,
+							args: toolExecutions.get(event.toolCallId)?.args ?? {},
+							status: event.isError ? "error" : "completed",
+							result: event.result,
+							isError: event.isError,
+						});
+						break;
+					}
+					case "agent_end":
+						toolExecutions.clear();
+						break;
+				}
+				const entry = sessionsRef.current.get(sessionId);
+				if (!entry) return;
+				services.sessionStore.replaceSessionMessages(
+					sessionId,
+					runtime.agent.state.messages,
+				);
+				if (activeSessionIdRef.current === sessionId) {
+					syncRuntimeState();
+				}
+			});
+			const entry: SessionRuntimeEntry = {
+				id: sessionId,
+				title: "New session",
+				runtime,
+				toolExecutions,
+				unsubscribe,
+			};
+			sessionsRef.current.set(sessionId, entry);
+			return entry;
+		},
+		[services, syncRuntimeState],
+	);
+
+	const activateSession = useCallback(
+		(sessionId: string) => {
+			const entry = sessionsRef.current.get(sessionId);
+			if (!entry) return null;
+			runtimeRef.current = entry.runtime;
+			setActiveSessionId(sessionId);
+			services.sessionStore.setLastActiveSessionId(sessionId);
+			syncRuntimeState();
+			return entry.runtime;
+		},
+		[services, syncRuntimeState],
+	);
+
+	const ensureActiveRuntime = useCallback(
 		(model: Model<Api> | null) => {
 			if (runtimeRef.current) {
 				if (model) {
@@ -228,237 +359,90 @@ export function useSessionController(providedServices?: SessionServices) {
 				}
 				return runtimeRef.current;
 			}
-
 			if (!model) {
-				if (services.createRuntime) {
-					const runtime = services.createRuntime(null);
-					if (runtime) {
-						runtimeRef.current = runtime;
-						if (runtimeUnsubscribeRef.current === null) {
-							runtimeUnsubscribeRef.current = runtime.subscribe(
-								(event: AgentEvent) => {
-									switch (event.type) {
-										case "tool_execution_start": {
-											const previous = toolExecutionsRef.current.get(
-												event.toolCallId,
-											);
-											toolExecutionsRef.current.set(event.toolCallId, {
-												toolCallId: event.toolCallId,
-												toolName: event.toolName,
-												args: event.args,
-												status: "running",
-												result: previous?.result,
-												isError: previous?.isError,
-											});
-											break;
-										}
-
-										case "tool_execution_update": {
-											toolExecutionsRef.current.set(event.toolCallId, {
-												toolCallId: event.toolCallId,
-												toolName: event.toolName,
-												args: event.args,
-												status: "running",
-												result: event.partialResult,
-												isError: false,
-											});
-											break;
-										}
-
-										case "tool_execution_end": {
-											toolExecutionsRef.current.set(event.toolCallId, {
-												toolCallId: event.toolCallId,
-												toolName: event.toolName,
-												args:
-													toolExecutionsRef.current.get(event.toolCallId)
-														?.args ?? {},
-												status: event.isError ? "error" : "completed",
-												result: event.result,
-												isError: event.isError,
-											});
-											break;
-										}
-
-										case "message_end": {
-											if (
-												event.message.role === "assistant" &&
-												(event.message.stopReason === "error" ||
-													event.message.stopReason === "aborted")
-											) {
-												for (const [
-													toolCallId,
-													execution,
-												] of toolExecutionsRef.current) {
-													if (
-														execution.status === "pending" ||
-														execution.status === "running"
-													) {
-														toolExecutionsRef.current.set(toolCallId, {
-															...execution,
-															status: "error",
-															isError: true,
-															result: {
-																content: [
-																	{
-																		type: "text",
-																		text:
-																			event.message.errorMessage ||
-																			"Tool execution interrupted",
-																	},
-																],
-																details: undefined,
-															},
-														});
-													}
-												}
-											}
-											break;
-										}
-
-										case "agent_end": {
-											toolExecutionsRef.current.clear();
-											break;
-										}
-									}
-
-									syncRuntimeState();
-								},
-							);
-						}
-						return runtime;
-					}
+				const sessionId = crypto.randomUUID();
+				services.sessionStore.createSession({
+					id: sessionId,
+					title: "New session",
+					workspaceRoot: services.workspaceRoot,
+					model: null,
+				});
+				const entry = buildSessionRuntime(sessionId, null);
+				if (!entry) {
+					return null;
 				}
+				activateSession(sessionId);
+				return entry.runtime;
+			}
+			const sessionId = crypto.randomUUID();
+			services.sessionStore.createSession({
+				id: sessionId,
+				title: "New session",
+				workspaceRoot: services.workspaceRoot,
+				model,
+			});
+			const entry = buildSessionRuntime(sessionId, model);
+			if (!entry) {
 				return null;
 			}
-
-			if (runtimeRef.current === null) {
-				const runtime = new SuperskyAgentRuntime({
-					authStorage: services.authStorage,
-					model,
-				});
-				runtimeUnsubscribeRef.current = runtime.subscribe(
-					(event: AgentEvent) => {
-						switch (event.type) {
-							case "tool_execution_start": {
-								const previous = toolExecutionsRef.current.get(
-									event.toolCallId,
-								);
-								toolExecutionsRef.current.set(event.toolCallId, {
-									toolCallId: event.toolCallId,
-									toolName: event.toolName,
-									args: event.args,
-									status: "running",
-									result: previous?.result,
-									isError: previous?.isError,
-								});
-								break;
-							}
-
-							case "tool_execution_update": {
-								const previous = toolExecutionsRef.current.get(
-									event.toolCallId,
-								);
-								toolExecutionsRef.current.set(event.toolCallId, {
-									toolCallId: event.toolCallId,
-									toolName: event.toolName,
-									args: event.args,
-									status: "running",
-									result: event.partialResult,
-									isError: false,
-								});
-								if (previous?.status === "pending") {
-									const current = toolExecutionsRef.current.get(
-										event.toolCallId,
-									);
-									if (!current) {
-										break;
-									}
-									toolExecutionsRef.current.set(event.toolCallId, {
-										...current,
-										status: "running",
-									});
-								}
-								break;
-							}
-
-							case "tool_execution_end": {
-								toolExecutionsRef.current.set(event.toolCallId, {
-									toolCallId: event.toolCallId,
-									toolName: event.toolName,
-									args:
-										toolExecutionsRef.current.get(event.toolCallId)?.args ?? {},
-									status: event.isError ? "error" : "completed",
-									result: event.result,
-									isError: event.isError,
-								});
-								break;
-							}
-
-							case "message_end": {
-								if (
-									event.message.role === "assistant" &&
-									(event.message.stopReason === "error" ||
-										event.message.stopReason === "aborted")
-								) {
-									for (const [
-										toolCallId,
-										execution,
-									] of toolExecutionsRef.current) {
-										if (
-											execution.status === "pending" ||
-											execution.status === "running"
-										) {
-											toolExecutionsRef.current.set(toolCallId, {
-												...execution,
-												status: "error",
-												isError: true,
-												result: {
-													content: [
-														{
-															type: "text",
-															text:
-																event.message.errorMessage ||
-																"Tool execution interrupted",
-														},
-													],
-													details: undefined,
-												},
-											});
-										}
-									}
-								}
-								break;
-							}
-
-							case "agent_end": {
-								toolExecutionsRef.current.clear();
-								break;
-							}
-						}
-
-						syncRuntimeState();
-					},
-				);
-				runtimeRef.current = runtime;
-			}
-
-			runtimeRef.current.setModel(model);
-			return runtimeRef.current;
+			activateSession(sessionId);
+			return entry.runtime;
 		},
-		[services, services.authStorage, syncRuntimeState],
+		[activateSession, buildSessionRuntime, services],
 	);
 
 	useEffect(() => {
-		if (activeModel) {
-			ensureRuntime(activeModel);
+		const fallbackModel = activeModelRef.current;
+		const summaries = services.sessionStore.listSessions(200);
+		const lastActiveId = services.sessionStore.getLastActiveSessionId();
+		const target = summaries.find((session) => session.id === lastActiveId)
+			?? summaries[0];
+		if (target) {
+			const stored = services.sessionStore.getSession(target.id);
+			const storedModel =
+				target.modelProvider && target.modelId
+					? services.modelRegistry.find(target.modelProvider, target.modelId)
+					: null;
+			const entry = buildSessionRuntime(
+				target.id,
+				storedModel ?? fallbackModel,
+				stored?.messages,
+			);
+			if (!entry) {
+				syncRuntimeState();
+				return;
+			}
+			entry.title = target.title;
+			activateSession(target.id);
+			return;
 		}
-		syncRuntimeState();
-	}, [activeModel, ensureRuntime, syncRuntimeState]);
+		const newSessionId = crypto.randomUUID();
+		services.sessionStore.createSession({
+			id: newSessionId,
+			title: "New session",
+			workspaceRoot: services.workspaceRoot,
+			model: fallbackModel ?? null,
+		});
+		const entry = buildSessionRuntime(newSessionId, fallbackModel ?? null);
+		if (!entry) {
+			syncRuntimeState();
+			return;
+		}
+		activateSession(newSessionId);
+	}, [
+		activateSession,
+		buildSessionRuntime,
+		services,
+		syncRuntimeState,
+	]);
 
 	useEffect(() => {
 		return () => {
-			runtimeUnsubscribeRef.current?.();
-			runtimeUnsubscribeRef.current = null;
+			for (const entry of sessionsRef.current.values()) {
+				entry.unsubscribe();
+				entry.runtime.abort();
+			}
+			sessionsRef.current.clear();
 		};
 	}, []);
 
@@ -505,6 +489,7 @@ export function useSessionController(providedServices?: SessionServices) {
 
 	const closeActivePicker = useCallback(() => {
 		setActivePicker(null);
+		setPendingDeleteSessionId(null);
 	}, []);
 
 	const cancelLoginDialog = useCallback(() => {
@@ -540,18 +525,53 @@ export function useSessionController(providedServices?: SessionServices) {
 		setLoginInputState("hidden");
 	}, [setLoginInputState]);
 
+	const setSessionRenameValue = useCallback((value: string) => {
+		setSessionRenameDialogState((current) =>
+			current
+				? {
+						...current,
+						value,
+					}
+				: current,
+		);
+	}, []);
+
+	const cancelSessionRename = useCallback(() => {
+		setSessionRenameDialogState(null);
+	}, []);
+
+	const submitSessionRename = useCallback(() => {
+		const dialog = sessionRenameDialogState;
+		if (!dialog) {
+			return;
+		}
+		const nextTitle = dialog.value.trim() || "New session";
+		services.sessionStore.updateSessionTitle(dialog.sessionId, nextTitle);
+		const entry = sessionsRef.current.get(dialog.sessionId);
+		if (entry) {
+			entry.title = nextTitle;
+		}
+		setSessionRenameDialogState(null);
+		setCommandNotice("Session renamed.");
+	}, [services, sessionRenameDialogState]);
+
 	const selectModel = useCallback(
 		(model: Model<Api>) => {
 			services.settingsManager.setDefaultModelAndProvider(
 				model.provider,
 				model.id,
 			);
-			ensureRuntime(model)?.setModel(model);
+			const sessionId = activeSessionIdRef.current;
+			if (sessionId) {
+				const entry = sessionsRef.current.get(sessionId);
+				entry?.runtime.setModel(model);
+				services.sessionStore.updateSessionModel(sessionId, model);
+			}
 			setActiveModel(model);
 			setActivePicker(null);
 			syncRuntimeState();
 		},
-		[ensureRuntime, services, syncRuntimeState],
+		[services, syncRuntimeState],
 	);
 
 	const exitSession = useCallback(() => {
@@ -562,14 +582,74 @@ export function useSessionController(providedServices?: SessionServices) {
 	const resetSession = useCallback(() => {
 		setCommandNotice(null);
 		setActivePicker(null);
-		runtimeRef.current?.abort();
-		runtimeUnsubscribeRef.current?.();
-		runtimeUnsubscribeRef.current = null;
-		runtimeRef.current = null;
-		toolExecutionsRef.current.clear();
+		const model = activeModelRef.current;
+		const sessionId = crypto.randomUUID();
+		services.sessionStore.createSession({
+			id: sessionId,
+			title: "New session",
+			workspaceRoot: services.workspaceRoot,
+			model: model ?? null,
+		});
+		const entry = buildSessionRuntime(sessionId, model ?? null);
+		if (!entry) {
+			return;
+		}
+		activateSession(sessionId);
 		dispatch({ type: "sessionReset" });
 		syncRuntimeState();
-	}, [syncRuntimeState]);
+	}, [activateSession, buildSessionRuntime, services, syncRuntimeState]);
+
+	const openRenameDialog = useCallback((sessionId: string) => {
+		const summary = services.sessionStore
+			.listSessions(500)
+			.find((session) => session.id === sessionId);
+		if (!summary) {
+			return;
+		}
+		setSessionRenameDialogState({
+			sessionId,
+			value: summary.title,
+		});
+	}, [services]);
+
+	const confirmDeleteSession = useCallback((sessionId: string) => {
+		const activeId = activeSessionIdRef.current;
+		const entry = sessionsRef.current.get(sessionId);
+		entry?.runtime.abort();
+		entry?.unsubscribe();
+		sessionsRef.current.delete(sessionId);
+		services.sessionStore.deleteSession(sessionId);
+		setPendingDeleteSessionId(null);
+		if (activeId === sessionId) {
+			const fallback = services.sessionStore.listSessions(1)[0];
+			if (fallback) {
+				const stored = services.sessionStore.getSession(fallback.id);
+				const model =
+					(fallback.modelProvider && fallback.modelId
+						? services.modelRegistry.find(
+								fallback.modelProvider,
+								fallback.modelId,
+							)
+						: null) ?? activeModelRef.current;
+				if (model) {
+					const runtimeEntry =
+						sessionsRef.current.get(fallback.id) ??
+						buildSessionRuntime(fallback.id, model, stored?.messages);
+					if (!runtimeEntry) {
+						return;
+					}
+					runtimeEntry.title = fallback.title;
+					activateSession(fallback.id);
+				}
+			} else {
+				runtimeRef.current = null;
+				setActiveSessionId(null);
+				dispatch({ type: "sessionReset" });
+				syncRuntimeState();
+			}
+		}
+		setCommandNotice("Session deleted.");
+	}, [activateSession, buildSessionRuntime, services, syncRuntimeState]);
 
 	const beginLoginFlow = useCallback(
 		async (providerId: string) => {
@@ -771,11 +851,9 @@ export function useSessionController(providedServices?: SessionServices) {
 					}) ?? null;
 				setActiveModel(fallbackModel);
 				if (fallbackModel) {
-					ensureRuntime(fallbackModel)?.setModel(fallbackModel);
+					runtimeRef.current?.setModel(fallbackModel);
 				} else {
 					runtimeRef.current?.abort();
-					runtimeUnsubscribeRef.current?.();
-					runtimeUnsubscribeRef.current = null;
 					runtimeRef.current = null;
 					syncRuntimeState();
 				}
@@ -783,7 +861,7 @@ export function useSessionController(providedServices?: SessionServices) {
 			setActivePicker(null);
 			setCommandNotice(`Logged out of ${providerName}`);
 		},
-		[ensureRuntime, services, syncRuntimeState],
+		[services, syncRuntimeState],
 	);
 
 	const setDraft = useCallback((value: string) => {
@@ -862,6 +940,36 @@ export function useSessionController(providedServices?: SessionServices) {
 					return;
 				}
 
+				if (slashCommand.command.name === SESSIONS_COMMAND) {
+					setActivePicker({ kind: "sessions" });
+					return;
+				}
+
+				if (slashCommand.command.name === RENAME_COMMAND) {
+					const sessionId = activeSessionIdRef.current;
+					if (!sessionId) {
+						setCommandNotice("No active session to rename.");
+						return;
+					}
+					openRenameDialog(sessionId);
+					return;
+				}
+
+				if (slashCommand.command.name === DELETE_COMMAND) {
+					const sessionId = activeSessionIdRef.current;
+					if (!sessionId) {
+						setCommandNotice("No active session to delete.");
+						return;
+					}
+					if (pendingDeleteSessionId === sessionId) {
+						confirmDeleteSession(sessionId);
+					} else {
+						setPendingDeleteSessionId(sessionId);
+						setCommandNotice("Press /delete again to confirm deleting session.");
+					}
+					return;
+				}
+
 				if (slashCommand.command.name === SETTINGS_COMMAND) {
 					setCommandNotice("Settings screen not implemented yet.");
 					return;
@@ -879,7 +987,7 @@ export function useSessionController(providedServices?: SessionServices) {
 				return;
 			}
 
-			const runtime = ensureRuntime(activeModelRef.current);
+			const runtime = ensureActiveRuntime(activeModelRef.current);
 			if (!runtime) {
 				setCommandNotice(
 					"No model selected. Use /login or /model to choose a model.",
@@ -913,8 +1021,11 @@ export function useSessionController(providedServices?: SessionServices) {
 				});
 		},
 		[
-			ensureRuntime,
+			confirmDeleteSession,
+			ensureActiveRuntime,
 			exitSession,
+			openRenameDialog,
+			pendingDeleteSessionId,
 			resetSession,
 			selectModel,
 			services,
@@ -934,6 +1045,7 @@ export function useSessionController(providedServices?: SessionServices) {
 			if (key.name === "escape") {
 				if (activePickerRef.current) {
 					setActivePicker(null);
+					setPendingDeleteSessionId(null);
 					setDismissComposerMenuToken((currentToken) => currentToken + 1);
 					return;
 				}
@@ -948,6 +1060,26 @@ export function useSessionController(providedServices?: SessionServices) {
 				return;
 			}
 
+			if (activePickerRef.current?.kind === "sessions") {
+				const selectedSessionId =
+					activeSessionIdRef.current ?? services.sessionStore.listSessions(1)[0]?.id;
+				if (selectedSessionId && key.ctrl && key.name === "r") {
+					openRenameDialog(selectedSessionId);
+					return;
+				}
+				if (selectedSessionId && key.ctrl && key.name === "d") {
+					if (pendingDeleteSessionId === selectedSessionId) {
+						confirmDeleteSession(selectedSessionId);
+					} else {
+						setPendingDeleteSessionId(selectedSessionId);
+						setCommandNotice(
+							"Press Ctrl+D again to confirm deleting selected session.",
+						);
+					}
+					return;
+				}
+			}
+
 			if (isExitShortcut(key)) {
 				exitSession();
 				return;
@@ -957,14 +1089,38 @@ export function useSessionController(providedServices?: SessionServices) {
 				resetSession();
 			}
 		},
-		[cancelLoginDialog, exitSession, resetSession],
+		[
+			cancelLoginDialog,
+			confirmDeleteSession,
+			exitSession,
+			openRenameDialog,
+			pendingDeleteSessionId,
+			resetSession,
+			services,
+		],
 	);
 
 	useKeyboard(handleKeyboardInput);
 
+	useEffect(() => {
+		if (activePicker?.kind !== "sessions") {
+			return;
+		}
+		const id = setInterval(() => {
+			setSessionPickerFrameIndex(
+				(current) => (current + 1) % BRAILLE_SPINNER_FRAMES.length,
+			);
+		}, 80);
+		return () => clearInterval(id);
+	}, [activePicker]);
+
 	const hasSubmittedUserMessages = state.messages.some(
 		(message) => message.role === "user",
 	);
+	const currentSessionTitle =
+		(activeSessionId
+			? sessionsRef.current.get(activeSessionId)?.title
+			: undefined) ?? "New session";
 
 	const commandPickerState: CommandPickerState | null = (() => {
 		if (!activePicker) {
@@ -1004,6 +1160,29 @@ export function useSessionController(providedServices?: SessionServices) {
 						id: provider.id,
 						label: provider.name,
 						meta,
+					};
+				}),
+			};
+		}
+
+		if (activePicker.kind === "sessions") {
+			const summaries = services.sessionStore.listSessions(500);
+			return {
+				kind: "sessions",
+				title: "Select session",
+				helperText: "Enter: switch  Ctrl+R: rename  Ctrl+D: delete (press twice)",
+				emptyText: "No sessions yet.",
+				selectedItemId: activeSessionId ?? undefined,
+				items: summaries.map((session) => {
+					const runtimeEntry = sessionsRef.current.get(session.id);
+					const isStreaming = runtimeEntry?.runtime.agent.state.isStreaming ?? false;
+					return {
+						id: session.id,
+						prefix: isStreaming
+							? BRAILLE_SPINNER_FRAMES[sessionPickerFrameIndex]
+							: " ",
+						label: session.title,
+						meta: formatRelativeTime(session.updatedAt),
 					};
 				}),
 			};
@@ -1051,6 +1230,47 @@ export function useSessionController(providedServices?: SessionServices) {
 				return;
 			}
 
+			if (currentPicker.kind === "sessions") {
+				const existing = sessionsRef.current.get(itemId);
+				if (existing) {
+					setActiveModel(existing.runtime.agent.state.model);
+					activateSession(itemId);
+					setActivePicker(null);
+					return;
+				}
+				const summary = services.sessionStore
+					.listSessions(500)
+					.find((session) => session.id === itemId);
+				const stored = services.sessionStore.getSession(itemId);
+				const fallbackModel = activeModelRef.current;
+				const restoredModel =
+					summary?.modelProvider && summary.modelId
+						? services.modelRegistry.find(
+								summary.modelProvider,
+								summary.modelId,
+							)
+						: null;
+				const selectedModel = restoredModel ?? fallbackModel;
+				if (!stored) {
+					return;
+				}
+				const entry = buildSessionRuntime(
+					itemId,
+					selectedModel ?? null,
+					stored.messages,
+				);
+				if (!entry) {
+					return;
+				}
+				entry.title = summary?.title ?? entry.title;
+				if (selectedModel) {
+					setActiveModel(selectedModel);
+				}
+				activateSession(itemId);
+				setActivePicker(null);
+				return;
+			}
+
 			const modelReference = parseModelPickerItemId(itemId);
 			if (!modelReference) {
 				return;
@@ -1069,7 +1289,14 @@ export function useSessionController(providedServices?: SessionServices) {
 
 			selectModel(selectedModel);
 		},
-		[beginLoginFlow, logoutProvider, selectModel, services],
+		[
+			activateSession,
+			beginLoginFlow,
+			buildSessionRuntime,
+			logoutProvider,
+			selectModel,
+			services,
+		],
 	);
 
 	return {
@@ -1085,6 +1312,7 @@ export function useSessionController(providedServices?: SessionServices) {
 		showPreviousHistory,
 		showNextHistory,
 		resetSession,
+		sessionTitle: currentSessionTitle,
 		activeModel,
 		toolDefinitions: runtimeRef.current?.toolDefinitions ?? {},
 		availableProviderCount: getAvailableProviderCount(services),
@@ -1095,5 +1323,9 @@ export function useSessionController(providedServices?: SessionServices) {
 		setLoginDialogInputValue,
 		submitLoginDialogInput,
 		cancelLoginDialog,
+		sessionRenameDialogState,
+		setSessionRenameValue,
+		submitSessionRename,
+		cancelSessionRename,
 	};
 }

@@ -1,5 +1,9 @@
 import type { AuthStorageLike } from "../session/providerState/authStorage";
-import { Agent, type AgentEvent } from "../vendor/pi-agent-core/index.js";
+import {
+	Agent,
+	type AgentEvent,
+	type AgentMessage,
+} from "../vendor/pi-agent-core/index.js";
 import { type Api, type Model, streamSimple } from "../vendor/pi-ai/index.js";
 import { buildSystemPrompt } from "./systemPrompt";
 import {
@@ -12,10 +16,13 @@ export type AgentRuntimeOptions = {
 	authStorage: AuthStorageLike;
 	cwd?: string;
 	model: Model<Api>;
+	sessionId: string;
+	initialMessages?: AgentMessage[];
 };
 
 export interface AgentRuntimeLike {
 	readonly agent: Agent;
+	readonly sessionId: string;
 	readonly toolDefinitions: BuiltInToolDefinitions;
 	setModel(model: Model<Api>): void;
 	reset(): void;
@@ -36,10 +43,12 @@ function formatCurrentDate(date: Date) {
 export class SuperskyAgentRuntime implements AgentRuntimeLike {
 	readonly agent: Agent;
 	readonly cwd: string;
+	readonly sessionId: string;
 	readonly toolDefinitions: BuiltInToolDefinitions;
 
 	constructor(private options: AgentRuntimeOptions) {
 		this.cwd = options.cwd ?? process.cwd();
+		this.sessionId = options.sessionId;
 		const tools = createBuiltInTools(this.cwd);
 		this.toolDefinitions = tools.definitions;
 		this.agent = new Agent({
@@ -50,6 +59,7 @@ export class SuperskyAgentRuntime implements AgentRuntimeLike {
 					tools: defaultToolNames.map((name) => tools.definitions[name]),
 				}),
 				model: options.model,
+				messages: options.initialMessages ?? [],
 				thinkingLevel: options.model.reasoning ? "medium" : "off",
 				tools: tools.active,
 			},
@@ -62,7 +72,7 @@ export class SuperskyAgentRuntime implements AgentRuntimeLike {
 					apiKey,
 				});
 			},
-			sessionId: `supersky-${Date.now()}`,
+			sessionId: this.sessionId,
 			toolExecution: "parallel",
 		});
 	}

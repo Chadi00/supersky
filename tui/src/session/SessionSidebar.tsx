@@ -5,11 +5,13 @@ import { colors } from "../shared/theme";
 import { SIDEBAR_MIN_WIDTH } from "./layout";
 
 type SessionSidebarProps = {
+	sessionTitle: string;
 	showModified?: boolean;
 	onMouseDown?: () => void;
 };
 
 export function SessionSidebar({
+	sessionTitle,
 	showModified = true,
 	onMouseDown,
 }: SessionSidebarProps) {
@@ -30,7 +32,7 @@ export function SessionSidebar({
 			}}
 		>
 			<text fg={colors.foregroundText}>
-				<strong>{sidebarData.title}</strong>
+				<strong>{sessionTitle}</strong>
 			</text>
 			<box flexDirection="column" gap={0}>
 				{sidebarData.usage.map((entry) => (

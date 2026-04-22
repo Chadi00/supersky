@@ -1,7 +1,8 @@
-export type CommandPickerKind = "provider" | "model";
+export type CommandPickerKind = "provider" | "model" | "sessions";
 
 export type CommandPickerItem = {
 	id: string;
+	prefix?: string;
 	label: string;
 	meta?: string;
 };

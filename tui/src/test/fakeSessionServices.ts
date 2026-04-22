@@ -15,8 +15,14 @@ import type {
 	OAuthProviderInterface,
 } from "../session/providerState/piSource";
 import type { SessionServices } from "../session/providerState/services";
+import type {
+	SessionStoreLike,
+	SessionSummary,
+	StoredSession,
+} from "../session/providerState/sessionStore";
 import type { SettingsManagerLike } from "../session/providerState/settingsManager";
 import { Agent } from "../vendor/pi-agent-core/index.js";
+import type { AgentMessage } from "../vendor/pi-agent-core/index.js";
 import { createAssistantMessageEventStream } from "../vendor/pi-ai/index.js";
 
 type FakeProviderSpec = {
@@ -49,8 +55,10 @@ function createModel(provider: string, id: string, name: string): Model<Api> {
 class FakeAgentRuntime implements AgentRuntimeLike {
 	readonly toolDefinitions = createBuiltInTools(process.cwd()).definitions;
 	readonly agent: Agent;
+	readonly sessionId: string;
 
-	constructor(model: Model<Api>) {
+	constructor(model: Model<Api>, sessionId: string) {
+		this.sessionId = sessionId;
 		const tools = createBuiltInTools(process.cwd());
 		this.agent = new Agent({
 			initialState: {
@@ -63,6 +71,7 @@ class FakeAgentRuntime implements AgentRuntimeLike {
 				thinkingLevel: model.reasoning ? "medium" : "off",
 				tools: tools.active,
 			},
+			sessionId,
 			streamFn: async (runtimeModel, context) => {
 				const stream = createAssistantMessageEventStream();
 				const lastUserMessage = [...context.messages]
@@ -335,6 +344,98 @@ class FakeModelRegistry implements ModelRegistryLike {
 	}
 }
 
+class FakeSessionStore implements SessionStoreLike {
+	private sessions = new Map<string, StoredSession>();
+	private lastActiveSessionId: string | null = null;
+
+	listSessions() {
+		return [...this.sessions.values()]
+			.map(
+				(session): SessionSummary => ({
+					id: session.id,
+					title: session.title,
+					createdAt: session.createdAt,
+					updatedAt: session.updatedAt,
+					modelProvider: session.modelProvider,
+					modelId: session.modelId,
+					workspaceRoot: session.workspaceRoot,
+				}),
+			)
+			.sort((a, b) => b.updatedAt - a.updatedAt);
+	}
+
+	getSession(sessionId: string) {
+		return this.sessions.get(sessionId) ?? null;
+	}
+
+	createSession(input: {
+		id: string;
+		title: string;
+		workspaceRoot: string;
+		model: Model<Api> | null;
+		createdAt?: number;
+	}) {
+		const now = input.createdAt ?? Date.now();
+		const session: StoredSession = {
+			id: input.id,
+			title: input.title,
+			createdAt: now,
+			updatedAt: now,
+			modelProvider: input.model?.provider ?? null,
+			modelId: input.model?.id ?? null,
+			workspaceRoot: input.workspaceRoot,
+			messages: [],
+		};
+		this.sessions.set(input.id, session);
+		return {
+			id: session.id,
+			title: session.title,
+			createdAt: session.createdAt,
+			updatedAt: session.updatedAt,
+			modelProvider: session.modelProvider,
+			modelId: session.modelId,
+			workspaceRoot: session.workspaceRoot,
+		};
+	}
+
+	updateSessionTitle(sessionId: string, title: string) {
+		const session = this.sessions.get(sessionId);
+		if (!session) return;
+		session.title = title;
+		session.updatedAt = Date.now();
+	}
+
+	updateSessionModel(sessionId: string, model: Model<Api> | null) {
+		const session = this.sessions.get(sessionId);
+		if (!session) return;
+		session.modelProvider = model?.provider ?? null;
+		session.modelId = model?.id ?? null;
+		session.updatedAt = Date.now();
+	}
+
+	replaceSessionMessages(sessionId: string, messages: AgentMessage[]) {
+		const session = this.sessions.get(sessionId);
+		if (!session) return;
+		session.messages = messages;
+		session.updatedAt = Date.now();
+	}
+
+	deleteSession(sessionId: string) {
+		this.sessions.delete(sessionId);
+		if (this.lastActiveSessionId === sessionId) {
+			this.lastActiveSessionId = null;
+		}
+	}
+
+	getLastActiveSessionId() {
+		return this.lastActiveSessionId;
+	}
+
+	setLastActiveSessionId(sessionId: string | null) {
+		this.lastActiveSessionId = sessionId;
+	}
+}
+
 export function createFakeSessionServices(options?: {
 	providerSpecs?: FakeProviderSpec[];
 	models?: Model<Api>[];
@@ -347,17 +448,23 @@ export function createFakeSessionServices(options?: {
 		authStorage,
 		options?.models ?? fakeModels,
 	);
+	const sessionStore = new FakeSessionStore();
 
 	return {
 		authStorage,
 		settingsManager,
 		modelRegistry,
+		sessionStore,
+		workspaceRoot: process.cwd(),
 		createRuntime: (model) => {
 			const fallbackModel = fakeModels[0];
 			if (!fallbackModel) {
 				return null;
 			}
-			return new FakeAgentRuntime(model ?? fallbackModel);
+			return new FakeAgentRuntime(
+				model ?? fallbackModel,
+				`fake-session-${Date.now()}`,
+			);
 		},
 		paths: {
 			authPath: "~/.supersky/agent/auth.json",
