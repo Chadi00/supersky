@@ -16,24 +16,25 @@ export type SlashCommandName =
 export type SlashCommand = {
   name: SlashCommandName;
   description: string;
-  stubMessage?: string;
+};
+
+export type SubmittedSlashCommand = {
+  command: SlashCommand;
+  argumentText: string;
 };
 
 const slashCommands: SlashCommand[] = [
   {
     name: PROVIDER_COMMAND,
     description: "Switch provider",
-    stubMessage: "Provider picker not implemented yet.",
   },
   {
     name: MODEL_COMMAND,
     description: "Switch model",
-    stubMessage: "Model picker not implemented yet.",
   },
   {
     name: SETTINGS_COMMAND,
     description: "Open settings",
-    stubMessage: "Settings screen not implemented yet.",
   },
   {
     name: NEW_SESSION_COMMAND,
@@ -126,7 +127,8 @@ export function getMatchingSlashCommands(query: string) {
 }
 
 export function parseSubmittedSlashCommand(input: string) {
-  const match = input.trim().match(/^\/([^\s]+)/);
+  const trimmedInput = input.trim();
+  const match = trimmedInput.match(/^\/([^\s]+)/);
   if (!match) {
     return null;
   }
@@ -136,7 +138,15 @@ export function parseSubmittedSlashCommand(input: string) {
     return null;
   }
 
-  return findSlashCommand(commandName);
+  const command = findSlashCommand(commandName);
+  if (!command) {
+    return null;
+  }
+
+  return {
+    command,
+    argumentText: trimmedInput.slice(match[0].length).trim(),
+  } satisfies SubmittedSlashCommand;
 }
 
 export function isExitCommand(input: string) {

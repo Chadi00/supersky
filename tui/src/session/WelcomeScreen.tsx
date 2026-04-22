@@ -1,12 +1,13 @@
 import { colors } from "../shared/theme";
 import { Composer } from "./Composer";
+import type { CommandPickerState } from "./commandPicker";
 
 type WelcomeScreenProps = {
   composerWidth: number;
   draft: string;
   commandNotice: string | null;
-  dismissSlashMenuToken: number;
-  onSlashMenuOpenChange: (open: boolean) => void;
+  dismissComposerMenuToken: number;
+  onComposerMenuOpenChange: (open: boolean) => void;
   resetToken: number;
   onDraftChange: (value: string) => void;
   onSubmit: (value: string) => void;
@@ -14,14 +15,17 @@ type WelcomeScreenProps = {
   isBrowsingHistory: boolean;
   onHistoryPrevious: () => void;
   onHistoryNext: () => void;
+  commandPickerState: CommandPickerState | null;
+  onCommandPickerClose: () => void;
+  onCommandPickerSelect: (itemId: string) => void;
 };
 
 export function WelcomeScreen({
   composerWidth,
   draft,
   commandNotice,
-  dismissSlashMenuToken,
-  onSlashMenuOpenChange,
+  dismissComposerMenuToken,
+  onComposerMenuOpenChange,
   resetToken,
   onDraftChange,
   onSubmit,
@@ -29,6 +33,9 @@ export function WelcomeScreen({
   isBrowsingHistory,
   onHistoryPrevious,
   onHistoryNext,
+  commandPickerState,
+  onCommandPickerClose,
+  onCommandPickerSelect,
 }: WelcomeScreenProps) {
   return (
     <box
@@ -48,8 +55,8 @@ export function WelcomeScreen({
         width={composerWidth}
         draft={draft}
         commandNotice={commandNotice}
-        dismissSlashMenuToken={dismissSlashMenuToken}
-        onSlashMenuOpenChange={onSlashMenuOpenChange}
+        dismissComposerMenuToken={dismissComposerMenuToken}
+        onComposerMenuOpenChange={onComposerMenuOpenChange}
         resetToken={resetToken}
         onDraftChange={onDraftChange}
         onSubmit={onSubmit}
@@ -57,6 +64,9 @@ export function WelcomeScreen({
         isBrowsingHistory={isBrowsingHistory}
         onHistoryPrevious={onHistoryPrevious}
         onHistoryNext={onHistoryNext}
+        commandPickerState={commandPickerState}
+        onCommandPickerClose={onCommandPickerClose}
+        onCommandPickerSelect={onCommandPickerSelect}
         focused
         minHeight={3}
       />

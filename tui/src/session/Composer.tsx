@@ -3,9 +3,14 @@ import type {
   ScrollBoxRenderable,
   TextareaRenderable,
 } from "@opentui/core";
+import { useKeyboard } from "@opentui/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { colors } from "../shared/theme";
+import {
+  type CommandPickerState,
+  getCommandPickerRowId,
+} from "./commandPicker";
 import {
   composerKeyBindings,
   getMatchingSlashCommands,
@@ -152,12 +157,155 @@ function SlashCommandMenu({
   );
 }
 
+type CommandPickerMenuProps = {
+  picker: CommandPickerState;
+  selectedIndex: number;
+  onSelect: (index: number) => void;
+  onExecute: (itemId: string) => void;
+};
+
+function CommandPickerMenu({
+  picker,
+  selectedIndex,
+  onSelect,
+  onExecute,
+}: CommandPickerMenuProps) {
+  const scrollboxRef = useRef<ScrollBoxRenderable | null>(null);
+
+  const visibleRows = Math.max(
+    1,
+    Math.min(picker.items.length, COMMAND_MENU_MAX_ITEMS),
+  );
+
+  useEffect(() => {
+    const selectedItem = picker.items[selectedIndex];
+    if (!selectedItem) {
+      return;
+    }
+
+    scrollboxRef.current?.scrollChildIntoView(
+      getCommandPickerRowId(picker.kind, selectedItem.id),
+    );
+  }, [picker, selectedIndex]);
+
+  return (
+    <box
+      position="absolute"
+      left={0}
+      bottom="100%"
+      width="100%"
+      zIndex={COMMAND_MENU_Z_INDEX}
+      overflow="visible"
+    >
+      <box
+        width="100%"
+        flexDirection="column"
+        backgroundColor={colors.commandMenuBackground}
+        border
+        borderColor={colors.commandMenuBorder}
+      >
+        <box
+          flexDirection="column"
+          paddingLeft={1}
+          paddingRight={1}
+          paddingTop={1}
+        >
+          <text fg={colors.foregroundText}>{picker.title}</text>
+          {picker.helperText ? (
+            <text fg={colors.mutedText}>{picker.helperText}</text>
+          ) : null}
+        </box>
+        <scrollbox
+          ref={scrollboxRef}
+          height={visibleRows}
+          focused={false}
+          scrollX={false}
+          style={{
+            rootOptions: { backgroundColor: colors.commandMenuBackground },
+            wrapperOptions: { backgroundColor: colors.commandMenuBackground },
+            viewportOptions: { backgroundColor: colors.commandMenuBackground },
+            contentOptions: { backgroundColor: colors.commandMenuBackground },
+            scrollbarOptions: { visible: false },
+            verticalScrollbarOptions: { visible: false },
+            horizontalScrollbarOptions: { visible: false },
+          }}
+        >
+          <box flexDirection="column">
+            {picker.items.length > 0 ? (
+              picker.items.map((item, index) => {
+                const selected = index === selectedIndex;
+
+                return (
+                  // biome-ignore lint/a11y/noStaticElementInteractions: OpenTUI box rows are the interactive menu primitive here.
+                  <box
+                    key={item.id}
+                    id={getCommandPickerRowId(picker.kind, item.id)}
+                    flexDirection="row"
+                    justifyContent="space-between"
+                    paddingLeft={1}
+                    paddingRight={1}
+                    backgroundColor={
+                      selected
+                        ? colors.commandMenuSelectedBackground
+                        : colors.commandMenuBackground
+                    }
+                    onMouseMove={() => {
+                      onSelect(index);
+                    }}
+                    onMouseDown={(event) => {
+                      if (event.button !== 0) {
+                        return;
+                      }
+
+                      event.preventDefault();
+                      event.stopPropagation();
+                      onSelect(index);
+                      onExecute(item.id);
+                    }}
+                  >
+                    <text
+                      fg={
+                        selected
+                          ? colors.commandMenuSelectedText
+                          : colors.foregroundText
+                      }
+                    >
+                      {item.label}
+                    </text>
+                    {item.meta ? (
+                      <text
+                        fg={
+                          selected
+                            ? colors.commandMenuSelectedText
+                            : colors.dimText
+                        }
+                      >
+                        {item.meta}
+                      </text>
+                    ) : (
+                      <text>{""}</text>
+                    )}
+                  </box>
+                );
+              })
+            ) : (
+              <box paddingLeft={1} paddingRight={1}>
+                <text fg={colors.mutedText}>{picker.emptyText}</text>
+              </box>
+            )}
+          </box>
+        </scrollbox>
+      </box>
+    </box>
+  );
+}
+
 type ComposerProps = {
   width: number | `${number}%`;
   draft: string;
   commandNotice: string | null;
-  dismissSlashMenuToken: number;
-  onSlashMenuOpenChange: (open: boolean) => void;
+  dismissComposerMenuToken: number;
+  onComposerMenuOpenChange: (open: boolean) => void;
   resetToken: number;
   onDraftChange: (value: string) => void;
   onSubmit: (value: string) => void;
@@ -165,6 +313,9 @@ type ComposerProps = {
   isBrowsingHistory: boolean;
   onHistoryPrevious: () => void;
   onHistoryNext: () => void;
+  commandPickerState: CommandPickerState | null;
+  onCommandPickerClose: () => void;
+  onCommandPickerSelect: (itemId: string) => void;
   focused: boolean;
   minHeight?: number;
   justifyContent?: "center" | "flex-end";
@@ -174,8 +325,8 @@ export function Composer({
   width,
   draft,
   commandNotice,
-  dismissSlashMenuToken,
-  onSlashMenuOpenChange,
+  dismissComposerMenuToken,
+  onComposerMenuOpenChange,
   resetToken,
   onDraftChange,
   onSubmit,
@@ -183,6 +334,9 @@ export function Composer({
   isBrowsingHistory,
   onHistoryPrevious,
   onHistoryNext,
+  commandPickerState,
+  onCommandPickerClose,
+  onCommandPickerSelect,
   focused,
   minHeight = COMPOSER_MIN_HEIGHT,
   justifyContent = "center",
@@ -190,6 +344,8 @@ export function Composer({
   const textareaRef = useRef<TextareaRenderable | null>(null);
   const [slashMenuQuery, setSlashMenuQuery] = useState<string | null>(null);
   const [selectedSlashCommandIndex, setSelectedSlashCommandIndex] = useState(0);
+  const [selectedCommandPickerIndex, setSelectedCommandPickerIndex] =
+    useState(0);
 
   const matchingSlashCommands = useMemo(
     () => getMatchingSlashCommands(slashMenuQuery ?? ""),
@@ -199,6 +355,8 @@ export function Composer({
     matchingSlashCommands[selectedSlashCommandIndex] ??
     matchingSlashCommands[0];
   const isSlashMenuOpen = slashMenuQuery !== null;
+  const isCommandPickerOpen = commandPickerState !== null;
+  const isComposerMenuOpen = isSlashMenuOpen || isCommandPickerOpen;
 
   const closeSlashMenu = () => {
     setSlashMenuQuery(null);
@@ -252,6 +410,21 @@ export function Composer({
     executeSlashCommand(selectedSlashCommand.name);
   };
 
+  const executeSelectedCommandPickerItem = () => {
+    if (!commandPickerState) {
+      return;
+    }
+
+    const selectedItem =
+      commandPickerState.items[selectedCommandPickerIndex] ??
+      commandPickerState.items[0];
+    if (!selectedItem) {
+      return;
+    }
+
+    onCommandPickerSelect(selectedItem.id);
+  };
+
   useEffect(() => {
     const textarea = textareaRef.current;
     if (!textarea) {
@@ -274,19 +447,52 @@ export function Composer({
   }, [draft]);
 
   useEffect(() => {
-    onSlashMenuOpenChange(isSlashMenuOpen);
-  }, [isSlashMenuOpen, onSlashMenuOpenChange]);
+    onComposerMenuOpenChange(isComposerMenuOpen);
+  }, [isComposerMenuOpen, onComposerMenuOpenChange]);
 
   useEffect(() => {
-    if (dismissSlashMenuToken === 0) {
+    if (!commandPickerState) {
+      setSelectedCommandPickerIndex(0);
+      return;
+    }
+
+    const nextSelectedIndex = commandPickerState.selectedItemId
+      ? commandPickerState.items.findIndex(
+          (item) => item.id === commandPickerState.selectedItemId,
+        )
+      : -1;
+    setSelectedCommandPickerIndex(
+      nextSelectedIndex >= 0 ? nextSelectedIndex : 0,
+    );
+  }, [commandPickerState]);
+
+  useEffect(() => {
+    if (dismissComposerMenuToken === 0) {
       return;
     }
 
     setSlashMenuQuery(null);
     setSelectedSlashCommandIndex(0);
-  }, [dismissSlashMenuToken]);
+    setSelectedCommandPickerIndex(0);
+    if (commandPickerState) {
+      onCommandPickerClose();
+    }
+  }, [commandPickerState, dismissComposerMenuToken, onCommandPickerClose]);
+
+  useKeyboard((key) => {
+    if (!focused || key.name !== "escape" || !commandPickerState) {
+      return;
+    }
+
+    onCommandPickerClose();
+  });
 
   const syncDraft = () => {
+    if (commandPickerState) {
+      onCommandPickerClose();
+      setSelectedCommandPickerIndex(0);
+    }
+
     updateSlashMenu();
     const nextDraft = textareaRef.current?.plainText ?? "";
 
@@ -324,6 +530,10 @@ export function Composer({
     }
 
     if (isSlashMenuOpen) {
+      if (commandPickerState) {
+        return;
+      }
+
       if (key.name === "escape") {
         key.preventDefault();
         key.stopPropagation();
@@ -368,6 +578,55 @@ export function Composer({
         key.preventDefault();
         key.stopPropagation();
         executeSelectedSlashCommand();
+        return;
+      }
+    }
+
+    if (commandPickerState) {
+      if (key.name === "escape") {
+        key.preventDefault();
+        key.stopPropagation();
+        onCommandPickerClose();
+        return;
+      }
+
+      if (key.name === "up") {
+        key.preventDefault();
+        key.stopPropagation();
+        setSelectedCommandPickerIndex((currentIndex) => {
+          if (commandPickerState.items.length === 0) {
+            return 0;
+          }
+
+          return currentIndex === 0
+            ? commandPickerState.items.length - 1
+            : currentIndex - 1;
+        });
+        return;
+      }
+
+      if (key.name === "down") {
+        key.preventDefault();
+        key.stopPropagation();
+        setSelectedCommandPickerIndex((currentIndex) => {
+          if (commandPickerState.items.length === 0) {
+            return 0;
+          }
+
+          return currentIndex >= commandPickerState.items.length - 1
+            ? 0
+            : currentIndex + 1;
+        });
+        return;
+      }
+
+      if (
+        commandPickerState.items.length > 0 &&
+        (key.name === "return" || key.name === "tab")
+      ) {
+        key.preventDefault();
+        key.stopPropagation();
+        executeSelectedCommandPickerItem();
         return;
       }
     }
@@ -441,7 +700,15 @@ export function Composer({
       overflow="visible"
     >
       <box position="relative" width="100%" overflow="visible">
-        {isSlashMenuOpen ? (
+        {commandPickerState ? (
+          <CommandPickerMenu
+            picker={commandPickerState}
+            selectedIndex={selectedCommandPickerIndex}
+            onSelect={setSelectedCommandPickerIndex}
+            onExecute={onCommandPickerSelect}
+          />
+        ) : null}
+        {!commandPickerState && isSlashMenuOpen ? (
           <SlashCommandMenu
             commands={matchingSlashCommands}
             selectedIndex={selectedSlashCommandIndex}

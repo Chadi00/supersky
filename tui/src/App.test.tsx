@@ -1,4 +1,5 @@
 import { expect, spyOn, test } from "bun:test";
+import { getCommandPickerRowId } from "./session/commandPicker";
 import { SIDEBAR_LAYOUT_WIDTH } from "./session/layout";
 import { appLifecycle } from "./shared/lifecycle";
 import {
@@ -39,7 +40,8 @@ test("renders the supersky TUI shell (new session)", async () => {
 
     expect(banner).not.toBeNull();
     expect(frame).not.toContain("___ _ _ _ __ ___ _ __ ___| | ___ _");
-    expect(frame).toContain("GPT-5.4 OpenAI");
+    expect(frame).toContain("No provider");
+    expect(frame).toContain("No model");
   });
 });
 
@@ -153,7 +155,7 @@ test("tab executes the highlighted slash command directly", async () => {
 
     const frame = setup.captureCharFrame();
 
-    expect(frame).toContain("Model picker not implemented yet.");
+    expect(frame).toContain("Connect a provider with /provider first.");
     expect(getComposerText(setup)).toBe("");
   });
 });
@@ -182,8 +184,195 @@ test("clicking a command executes it directly", async () => {
 
     const frame = setup.captureCharFrame();
 
-    expect(frame).toContain("Model picker not implemented yet.");
+    expect(frame).toContain("Connect a provider with /provider first.");
     expect(getComposerText(setup)).toBe("");
+  });
+});
+
+test("submitting /provider opens the provider picker", async () => {
+  await withApp(async (setup) => {
+    await submitText(setup, "/provider");
+    await settleScrollLayout(setup);
+
+    const frame = setup.captureCharFrame();
+
+    expect(frame).toContain("Select provider to connect");
+    expect(frame).toContain("GitHub Copilot");
+    expect(frame).toContain("Anthropic (Claude Pro/Max)");
+    expect(getComposerText(setup)).toBe("");
+  });
+});
+
+test("selecting a provider connects it and updates the footer", async () => {
+  await withApp(async (setup) => {
+    await submitText(setup, "/provider");
+    await clickRenderable(
+      setup,
+      getCommandPickerRowId("provider", "anthropic"),
+    );
+    await settleScrollLayout(setup);
+
+    const frame = setup.captureCharFrame();
+
+    expect(frame).toContain("Claude Opus 4.6");
+    expect(frame).toContain("Anthropic (Claude Pro/Max)");
+  });
+});
+
+test("the provider picker supports keyboard navigation", async () => {
+  await withApp(async (setup) => {
+    await submitText(setup, "/provider");
+    await pressDown(setup);
+    await pressEnter(setup);
+    await settleScrollLayout(setup);
+
+    const frame = setup.captureCharFrame();
+
+    expect(frame).toContain("GitHub Copilot");
+    expect(frame).toContain("GPT-4.1");
+  });
+});
+
+test("submitting /model shows an empty state until a provider is connected", async () => {
+  await withApp(async (setup) => {
+    await submitText(setup, "/model");
+    await settleScrollLayout(setup);
+
+    const frame = setup.captureCharFrame();
+
+    expect(frame).toContain("Connect a provider with /provider first.");
+    expect(frame).toContain("Select model");
+    expect(frame).not.toContain("Assistant");
+  });
+});
+
+test("the model picker only shows models for the active provider", async () => {
+  await withApp(async (setup) => {
+    await submitText(setup, "/provider");
+    await clickRenderable(
+      setup,
+      getCommandPickerRowId("provider", "anthropic"),
+    );
+    await settleScrollLayout(setup);
+
+    await submitText(setup, "/model");
+    await settleScrollLayout(setup);
+
+    const frame = setup.captureCharFrame();
+
+    expect(frame).toContain("Select model for Anthropic (Claude Pro/Max)");
+    expect(frame).toContain("Claude Sonnet 4.5");
+    expect(frame).not.toContain("GPT-5.4 Mini");
+  });
+});
+
+test("selecting a model updates the footer", async () => {
+  await withApp(async (setup) => {
+    await submitText(setup, "/provider");
+    await clickRenderable(setup, getCommandPickerRowId("provider", "google"));
+    await settleScrollLayout(setup);
+
+    await submitText(setup, "/model");
+    await clickRenderable(
+      setup,
+      getCommandPickerRowId("model", "gemini-2-5-flash"),
+    );
+    await settleScrollLayout(setup);
+
+    const frame = setup.captureCharFrame();
+
+    expect(frame).toContain("Google");
+    expect(frame).toContain("Gemini 2.5 Flash");
+  });
+});
+
+test("the model picker supports keyboard navigation", async () => {
+  await withApp(async (setup) => {
+    await submitText(setup, "/provider");
+    await clickRenderable(setup, getCommandPickerRowId("provider", "google"));
+    await settleScrollLayout(setup);
+
+    await submitText(setup, "/model");
+    await pressDown(setup);
+    await pressEnter(setup);
+    await settleScrollLayout(setup);
+
+    const frame = setup.captureCharFrame();
+
+    expect(frame).toContain("Gemini 2.5 Flash");
+  });
+});
+
+test("/model with an exact match switches immediately", async () => {
+  await withApp(async (setup) => {
+    await submitText(setup, "/provider");
+    await clickRenderable(
+      setup,
+      getCommandPickerRowId("provider", "anthropic"),
+    );
+    await settleScrollLayout(setup);
+
+    await submitText(setup, "/model claude-haiku-4");
+    await settleScrollLayout(setup);
+
+    const frame = setup.captureCharFrame();
+
+    expect(frame).toContain("Claude Haiku 4");
+    expect(frame).not.toContain("Select model for Anthropic (Claude Pro/Max)");
+  });
+});
+
+test("selected provider and model persist across /new", async () => {
+  await withApp(async (setup) => {
+    await submitText(setup, "/provider");
+    await clickRenderable(setup, getCommandPickerRowId("provider", "google"));
+    await settleScrollLayout(setup);
+
+    await submitText(setup, "/model");
+    await clickRenderable(
+      setup,
+      getCommandPickerRowId("model", "gemini-2-5-flash"),
+    );
+    await settleScrollLayout(setup);
+
+    await submitText(setup, "new session please");
+    await submitText(setup, "/new");
+    await settleScrollLayout(setup);
+
+    const frame = setup.captureCharFrame();
+
+    expect(frame).toContain("supersky");
+    expect(frame).not.toContain("new session please");
+    expect(frame).toContain("Google");
+    expect(frame).toContain("Gemini 2.5 Flash");
+  });
+});
+
+test("switching back to a connected provider restores its previous model", async () => {
+  await withApp(async (setup) => {
+    await submitText(setup, "/provider");
+    await clickRenderable(setup, getCommandPickerRowId("provider", "google"));
+    await settleScrollLayout(setup);
+
+    await submitText(setup, "/model");
+    await clickRenderable(
+      setup,
+      getCommandPickerRowId("model", "gemini-2-5-flash"),
+    );
+    await settleScrollLayout(setup);
+
+    await submitText(setup, "/provider");
+    await clickRenderable(setup, getCommandPickerRowId("provider", "copilot"));
+    await settleScrollLayout(setup);
+
+    await submitText(setup, "/provider");
+    await clickRenderable(setup, getCommandPickerRowId("provider", "google"));
+    await settleScrollLayout(setup);
+
+    const frame = setup.captureCharFrame();
+
+    expect(frame).toContain("Google");
+    expect(frame).toContain("Gemini 2.5 Flash");
   });
 });
 
@@ -520,8 +709,6 @@ test("opening the command menu does not move the in-session composer", async () 
 });
 
 for (const [command, notice] of [
-  ["/provider", "Provider picker not implemented yet."],
-  ["/model", "Model picker not implemented yet."],
   ["/settings", "Settings screen not implemented yet."],
 ] as const) {
   test(`submitting ${command} shows the stub notice`, async () => {

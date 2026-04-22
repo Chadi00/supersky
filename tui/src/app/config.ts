@@ -1,7 +1,5 @@
 export const appMetadata = {
   version: "0.1.0",
-  modelName: "GPT-5.4 OpenAI",
-  modelQuality: "high",
 } as const;
 
 export const assistantDemoSummary = {

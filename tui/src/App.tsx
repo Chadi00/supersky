@@ -21,12 +21,17 @@ export function App({ projectLine }: AppProps) {
     hasSubmittedUserMessages,
     isBrowsingHistory,
     commandNotice,
-    dismissSlashMenuToken,
-    setSlashMenuOpen,
+    dismissComposerMenuToken,
+    setComposerMenuOpen,
     setDraft,
     submit,
     showPreviousHistory,
     showNextHistory,
+    activeProvider,
+    activeModel,
+    commandPickerState,
+    closeCommandPicker,
+    selectCommandPickerItem,
   } = useSessionController();
   const layout = deriveSessionLayout(width, isNewSession);
 
@@ -43,8 +48,8 @@ export function App({ projectLine }: AppProps) {
             composerWidth={layout.welcomeComposerWidth}
             draft={state.draft}
             commandNotice={commandNotice}
-            dismissSlashMenuToken={dismissSlashMenuToken}
-            onSlashMenuOpenChange={setSlashMenuOpen}
+            dismissComposerMenuToken={dismissComposerMenuToken}
+            onComposerMenuOpenChange={setComposerMenuOpen}
             resetToken={state.composerResetToken}
             onDraftChange={setDraft}
             onSubmit={submit}
@@ -52,6 +57,9 @@ export function App({ projectLine }: AppProps) {
             isBrowsingHistory={isBrowsingHistory}
             onHistoryPrevious={showPreviousHistory}
             onHistoryNext={showNextHistory}
+            commandPickerState={commandPickerState}
+            onCommandPickerClose={closeCommandPicker}
+            onCommandPickerSelect={selectCommandPickerItem}
           />
         ) : (
           <box
@@ -71,9 +79,9 @@ export function App({ projectLine }: AppProps) {
                 <Composer
                   width="100%"
                   draft={state.draft}
-                  commandNotice={commandNotice}
-                  dismissSlashMenuToken={dismissSlashMenuToken}
-                  onSlashMenuOpenChange={setSlashMenuOpen}
+                  commandNotice={null}
+                  dismissComposerMenuToken={dismissComposerMenuToken}
+                  onComposerMenuOpenChange={setComposerMenuOpen}
                   resetToken={state.composerResetToken}
                   onDraftChange={setDraft}
                   onSubmit={submit}
@@ -81,6 +89,9 @@ export function App({ projectLine }: AppProps) {
                   isBrowsingHistory={isBrowsingHistory}
                   onHistoryPrevious={showPreviousHistory}
                   onHistoryNext={showNextHistory}
+                  commandPickerState={commandPickerState}
+                  onCommandPickerClose={closeCommandPicker}
+                  onCommandPickerSelect={selectCommandPickerItem}
                   focused
                 />
               </box>
@@ -95,7 +106,12 @@ export function App({ projectLine }: AppProps) {
         )}
       </box>
 
-      <AppFooter isNewSession={isNewSession} projectLine={projectLine} />
+      <AppFooter
+        isNewSession={isNewSession}
+        projectLine={projectLine}
+        providerName={activeProvider?.name ?? null}
+        modelName={activeModel?.name ?? null}
+      />
     </box>
   );
 }

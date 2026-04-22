@@ -49,9 +49,17 @@ test("matches slash commands by prefix before description text", () => {
 });
 
 test("parses a submitted slash command from the first token", () => {
-  expect(parseSubmittedSlashCommand(" /ExIt  ")?.name).toBe(EXIT_COMMAND);
-  expect(parseSubmittedSlashCommand("/new later")?.name).toBe(
+  expect(parseSubmittedSlashCommand(" /ExIt  ")?.command.name).toBe(
+    EXIT_COMMAND,
+  );
+  expect(parseSubmittedSlashCommand("/new later")?.command.name).toBe(
     NEW_SESSION_COMMAND,
   );
   expect(parseSubmittedSlashCommand("hello")).toBeNull();
+});
+
+test("captures slash command arguments after the first token", () => {
+  expect(parseSubmittedSlashCommand("/model gpt-5.4-mini")?.argumentText).toBe(
+    "gpt-5.4-mini",
+  );
 });
