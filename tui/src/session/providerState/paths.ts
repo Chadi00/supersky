@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
 	chmodSync,
 	existsSync,
@@ -6,7 +7,6 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 
 export function getAgentDir() {

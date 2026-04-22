@@ -38,6 +38,7 @@ function AppContent({ projectLine, services, initialSessionId }: AppProps) {
 	const toast = useToast();
 	const {
 		state,
+		sessionSidebarUsage,
 		isNewSession,
 		hasSubmittedUserMessages,
 		isBrowsingHistory,
@@ -206,6 +207,7 @@ function AppContent({ projectLine, services, initialSessionId }: AppProps) {
 							<box width={layout.sidebarWidth} flexShrink={0} minHeight={0}>
 								<SessionSidebar
 									sessionTitle={sessionTitle}
+									usage={sessionSidebarUsage}
 									onMouseDown={focusComposer}
 								/>
 							</box>

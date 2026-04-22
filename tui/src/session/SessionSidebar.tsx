@@ -4,14 +4,19 @@ import { sidebarData } from "../app/config";
 import { colors } from "../shared/theme";
 import { SIDEBAR_MIN_WIDTH } from "./layout";
 
+const SIDEBAR_USAGE_LINE_KEYS = ["tokens", "percent", "cost"] as const;
+
 type SessionSidebarProps = {
 	sessionTitle: string;
+	/** Context/cost lines (tokens, % used, $ spent) — from live session, pi-mono compatible. */
+	usage: readonly string[];
 	showModified?: boolean;
 	onMouseDown?: () => void;
 };
 
 export function SessionSidebar({
 	sessionTitle,
+	usage,
 	showModified = true,
 	onMouseDown,
 }: SessionSidebarProps) {
@@ -35,8 +40,11 @@ export function SessionSidebar({
 				<strong>{sessionTitle}</strong>
 			</text>
 			<box flexDirection="column" gap={0}>
-				{sidebarData.usage.map((entry) => (
-					<text key={entry} fg={colors.dimText}>
+				{usage.map((entry, index) => (
+					<text
+						key={SIDEBAR_USAGE_LINE_KEYS[index] ?? `usage-extra-${index}`}
+						fg={colors.dimText}
+					>
 						{entry}
 					</text>
 				))}

@@ -8,6 +8,8 @@ export interface ModelRegistryLike {
 	getAvailable(): Model<Api>[];
 	find(provider: string, modelId: string): Model<Api> | undefined;
 	hasConfiguredAuth(model: Model<Api>): boolean;
+	/** True when the model's provider is logged in with OAuth (subscription) — see pi-mono model-registry. */
+	isUsingOAuth(model: Model<Api>): boolean;
 }
 
 export class ModelRegistry implements ModelRegistryLike {
@@ -51,5 +53,10 @@ export class ModelRegistry implements ModelRegistryLike {
 
 	hasConfiguredAuth(model: Model<Api>) {
 		return this.authStorage.hasAuth(model.provider);
+	}
+
+	isUsingOAuth(model: Model<Api>) {
+		const cred = this.authStorage.get(model.provider);
+		return cred?.type === "oauth";
 	}
 }

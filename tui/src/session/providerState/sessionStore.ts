@@ -2,8 +2,8 @@ import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { AgentMessage } from "../../vendor/pi-agent-core/index.js";
-import type { Api, Model } from "./piSource";
 import { getSessionsDbPath } from "./paths";
+import type { Api, Model } from "./piSource";
 
 type SessionRow = {
 	id: string;
@@ -125,7 +125,9 @@ export class SessionStore implements SessionStoreLike {
 			.all(sessionId) as Array<{ payload: string }>;
 		return {
 			...mapSessionRow(row),
-			messages: messagesRows.map((entry) => JSON.parse(entry.payload) as AgentMessage),
+			messages: messagesRows.map(
+				(entry) => JSON.parse(entry.payload) as AgentMessage,
+			),
 		};
 	}
 
@@ -179,18 +181,20 @@ export class SessionStore implements SessionStoreLike {
 
 	replaceSessionMessages(sessionId: string, messages: AgentMessage[]) {
 		const now = Date.now();
-		const transaction = this.db.transaction((session: string, payloads: AgentMessage[]) => {
-			this.db.query("DELETE FROM message WHERE session_id = ?").run(session);
-			const insert = this.db.query(
-				"INSERT INTO message (session_id, seq, payload) VALUES (?, ?, ?)",
-			);
-			for (let index = 0; index < payloads.length; index += 1) {
-				insert.run(session, index, JSON.stringify(payloads[index]));
-			}
-			this.db
-				.query("UPDATE session SET updated_at = ? WHERE id = ?")
-				.run(now, session);
-		});
+		const transaction = this.db.transaction(
+			(session: string, payloads: AgentMessage[]) => {
+				this.db.query("DELETE FROM message WHERE session_id = ?").run(session);
+				const insert = this.db.query(
+					"INSERT INTO message (session_id, seq, payload) VALUES (?, ?, ?)",
+				);
+				for (let index = 0; index < payloads.length; index += 1) {
+					insert.run(session, index, JSON.stringify(payloads[index]));
+				}
+				this.db
+					.query("UPDATE session SET updated_at = ? WHERE id = ?")
+					.run(now, session);
+			},
+		);
 		transaction(sessionId, messages);
 	}
 
@@ -203,7 +207,9 @@ export class SessionStore implements SessionStoreLike {
 
 	getLastActiveSessionId() {
 		const row = this.db
-			.query("SELECT value FROM workspace_meta WHERE key = 'last_active_session_id'")
+			.query(
+				"SELECT value FROM workspace_meta WHERE key = 'last_active_session_id'",
+			)
 			.get() as { value: string } | null;
 		return row?.value || null;
 	}
@@ -211,7 +217,9 @@ export class SessionStore implements SessionStoreLike {
 	setLastActiveSessionId(sessionId: string | null) {
 		if (!sessionId) {
 			this.db
-				.query("DELETE FROM workspace_meta WHERE key = 'last_active_session_id'")
+				.query(
+					"DELETE FROM workspace_meta WHERE key = 'last_active_session_id'",
+				)
 				.run();
 			return;
 		}

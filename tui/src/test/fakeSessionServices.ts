@@ -351,6 +351,10 @@ class FakeModelRegistry implements ModelRegistryLike {
 	hasConfiguredAuth(model: Model<Api>) {
 		return this.authStorage.hasAuth(model.provider);
 	}
+
+	isUsingOAuth(model: Model<Api>) {
+		return this.authStorage.get(model.provider)?.type === "oauth";
+	}
 }
 
 class FakeSessionStore implements SessionStoreLike {
@@ -448,6 +452,7 @@ class FakeSessionStore implements SessionStoreLike {
 export function createFakeSessionServices(options?: {
 	providerSpecs?: FakeProviderSpec[];
 	models?: Model<Api>[];
+	generateSessionTitle?: SessionServices["generateSessionTitle"];
 }) {
 	const authStorage = new FakeAuthStorage(
 		options?.providerSpecs ?? defaultProviderSpecs,
@@ -476,6 +481,7 @@ export function createFakeSessionServices(options?: {
 				options?.initialMessages,
 			);
 		},
+		generateSessionTitle: options?.generateSessionTitle,
 		paths: {
 			authPath: "~/.supersky/agent/auth.json",
 			settingsPath: "~/.supersky/agent/settings.json",

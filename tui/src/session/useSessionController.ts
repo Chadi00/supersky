@@ -1,5 +1,12 @@
 import { useKeyboard, useRenderer } from "@opentui/react";
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import {
+	useCallback,
+	useEffect,
+	useMemo,
+	useReducer,
+	useRef,
+	useState,
+} from "react";
 import { type AgentRuntimeLike, SuperskyAgentRuntime } from "../agent/runtime";
 import { copyToClipboard } from "../app/clipboard";
 import { destroyRendererAndExit } from "../shared/lifecycle";
@@ -23,6 +30,7 @@ import {
 	SESSIONS_COMMAND,
 	SETTINGS_COMMAND,
 } from "./commands";
+import { buildSessionSidebarUsageLines } from "./contextUsageDisplay";
 import type { LoginDialogLineTone, LoginDialogState } from "./LoginDialog";
 import { openUrlInBrowser } from "./providerState/browser";
 import {
@@ -62,6 +70,8 @@ type SessionRuntimeEntry = {
 	toolExecutions: Map<string, ToolExecutionState>;
 	unsubscribe: () => void;
 };
+
+const DEFAULT_SESSION_TITLE = "New session";
 
 function getModelPickerItemId(model: Model<Api>) {
 	return `${model.provider}/${model.id}`;
@@ -540,6 +550,56 @@ export function useSessionController(
 		setSessionRenameDialogState(null);
 	}, []);
 
+	const updateSessionTitle = useCallback(
+		(sessionId: string, title: string) => {
+			services.sessionStore.updateSessionTitle(sessionId, title);
+			const entry = sessionsRef.current.get(sessionId);
+			if (entry) {
+				entry.title = title;
+			}
+		},
+		[services],
+	);
+
+	const maybeAutoRenameSession = useCallback(
+		(sessionId: string, model: Model<Api> | null, firstMessage: string) => {
+			if (!model || !services.generateSessionTitle) {
+				return;
+			}
+			const currentTitle =
+				sessionsRef.current.get(sessionId)?.title ??
+				services.sessionStore.getSession(sessionId)?.title;
+			if (currentTitle !== DEFAULT_SESSION_TITLE) {
+				return;
+			}
+			void services
+				.generateSessionTitle({
+					model,
+					sessionId,
+					firstMessage,
+				})
+				.then((nextTitle) => {
+					if (!nextTitle) {
+						return;
+					}
+					const latestTitle =
+						sessionsRef.current.get(sessionId)?.title ??
+						services.sessionStore.getSession(sessionId)?.title;
+					if (latestTitle !== DEFAULT_SESSION_TITLE) {
+						return;
+					}
+					updateSessionTitle(sessionId, nextTitle);
+					if (activeSessionIdRef.current === sessionId) {
+						syncRuntimeState();
+					}
+				})
+				.catch(() => {
+					// Keep the default title if generating a short title fails.
+				});
+		},
+		[services, syncRuntimeState, updateSessionTitle],
+	);
+
 	const copySessionId = useCallback(async (sessionId: string) => {
 		await copyToClipboard(sessionId);
 		setCommandNotice("Session ID copied to clipboard.");
@@ -561,16 +621,13 @@ export function useSessionController(
 		if (!dialog) {
 			return;
 		}
-		const nextTitle = sessionRenameValueRef.current.trim() || "New session";
-		services.sessionStore.updateSessionTitle(dialog.sessionId, nextTitle);
-		const entry = sessionsRef.current.get(dialog.sessionId);
-		if (entry) {
-			entry.title = nextTitle;
-		}
+		const nextTitle =
+			sessionRenameValueRef.current.trim() || DEFAULT_SESSION_TITLE;
+		updateSessionTitle(dialog.sessionId, nextTitle);
 		sessionRenameValueRef.current = "";
 		setSessionRenameDialogState(null);
 		setCommandNotice("Session renamed.");
-	}, [services, sessionRenameDialogState]);
+	}, [sessionRenameDialogState, updateSessionTitle]);
 
 	const selectModel = useCallback(
 		(model: Model<Api>) => {
@@ -1027,9 +1084,19 @@ export function useSessionController(
 				content: [{ type: "text", text }],
 				timestamp: Date.now(),
 			};
+			const isFirstUserMessage = !runtime.agent.state.messages.some(
+				(message) => message.role === "user",
+			);
 
 			setShowWelcomeScreen(false);
 			dispatch({ type: "promptSubmitted", message: userMessage });
+			if (isFirstUserMessage) {
+				maybeAutoRenameSession(
+					runtime.sessionId,
+					runtime.agent.state.model,
+					text,
+				);
+			}
 
 			if (runtime.agent.state.isStreaming) {
 				runtime.agent.followUp(userMessage);
@@ -1053,6 +1120,7 @@ export function useSessionController(
 		[
 			ensureActiveRuntime,
 			exitSession,
+			maybeAutoRenameSession,
 			openRenameDialog,
 			resetSession,
 			selectModel,
@@ -1109,10 +1177,27 @@ export function useSessionController(
 	const hasSubmittedUserMessages =
 		state.pendingUserMessages.length > 0 ||
 		state.messages.some((message) => message.role === "user");
+
+	const sessionSidebarUsage = useMemo(
+		() =>
+			buildSessionSidebarUsageLines(
+				activeModel,
+				state.messages,
+				state.streamingMessage,
+				activeModel ? services.modelRegistry.isUsingOAuth(activeModel) : false,
+			),
+		[
+			activeModel,
+			state.messages,
+			state.streamingMessage,
+			services.modelRegistry,
+		],
+	);
+
 	const currentSessionTitle =
 		(activeSessionId
 			? sessionsRef.current.get(activeSessionId)?.title
-			: undefined) ?? "New session";
+			: undefined) ?? DEFAULT_SESSION_TITLE;
 
 	const commandPickerState: CommandPickerState | null = (() => {
 		if (!activePicker) {
@@ -1299,6 +1384,7 @@ export function useSessionController(
 
 	return {
 		state,
+		sessionSidebarUsage,
 		isNewSession: showWelcomeScreen,
 		hasSubmittedUserMessages,
 		isBrowsingHistory: state.historyIndex !== null,

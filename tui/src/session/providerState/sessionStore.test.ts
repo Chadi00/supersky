@@ -32,7 +32,10 @@ test("creates, lists, renames, and deletes sessions", () => {
 			model: null,
 		});
 
-		expect(store.listSessions().map((session) => session.id)).toEqual(["s-2", "s-1"]);
+		expect(store.listSessions().map((session) => session.id)).toEqual([
+			"s-2",
+			"s-1",
+		]);
 		store.updateSessionTitle("s-1", "Renamed");
 		expect(store.getSession("s-1")?.title).toBe("Renamed");
 

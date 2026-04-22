@@ -317,7 +317,7 @@ export function InlineCommandPickerDialog({
 											backgroundColor={
 												isSelected ? SELECTED_BACKGROUND : PANEL_BACKGROUND
 											}
-											paddingLeft={isCurrent || item.prefix ? 1 : 3}
+											paddingLeft={1}
 											paddingRight={3}
 											gap={1}
 											onMouseMove={() => {

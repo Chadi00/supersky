@@ -445,9 +445,7 @@ export function SessionPickerDialog({
 													id={getCommandPickerRowId("sessions", item.id)}
 													flexDirection="row"
 													backgroundColor={rowBackground}
-													paddingLeft={
-														item.isCurrent || item.isStreaming ? 1 : 3
-													}
+													paddingLeft={1}
 													paddingRight={3}
 													gap={1}
 													onMouseMove={() => {

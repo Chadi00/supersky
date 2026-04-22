@@ -9,6 +9,7 @@ import { appLifecycle } from "./shared/lifecycle";
 import {
 	areScrollbarsHidden,
 	captureRenderableGeometryByConstructorName,
+	captureRenderableGeometryById,
 	captureShellGeometry,
 	clickFirstScrollBox,
 	clickRenderable,
@@ -88,6 +89,14 @@ function createStoredSessionMessages(text: string): AgentMessage[] {
 			timestamp: 1,
 		},
 	];
+}
+
+function expectRowsLeftAligned(root: unknown, ...rowIds: string[]) {
+	const positions = rowIds.map(
+		(rowId) => captureRenderableGeometryById(root, rowId).x,
+	);
+
+	expect(new Set(positions).size).toBe(1);
 }
 
 let openUrlSpy: ReturnType<typeof spyOn<typeof browser, "openUrlInBrowser">>;
@@ -366,6 +375,26 @@ test("the provider picker supports keyboard navigation", async () => {
 	});
 });
 
+test("the provider picker keeps the current provider left aligned", async () => {
+	await withApp(async (setup) => {
+		await submitText(setup, "/login");
+		await clickRenderable(
+			setup,
+			getCommandPickerRowId("provider", "google-gemini-cli"),
+		);
+		await settleScrollLayout(setup);
+
+		await submitText(setup, "/login");
+		await settleScrollLayout(setup);
+
+		expectRowsLeftAligned(
+			setup.renderer.root,
+			getCommandPickerRowId("provider", "google-gemini-cli"),
+			getCommandPickerRowId("provider", "anthropic"),
+		);
+	});
+});
+
 test("manual login providers show the login dialog and accept callback input", async () => {
 	await withApp(async (setup) => {
 		await submitText(setup, "/login");
@@ -487,6 +516,33 @@ test("the model picker supports keyboard navigation", async () => {
 		const frame = setup.captureCharFrame();
 
 		expect(frame).toContain("gemini-2.5-flash");
+	});
+});
+
+test("the model picker keeps the selected model left aligned", async () => {
+	await withApp(async (setup) => {
+		await submitText(setup, "/login");
+		await clickRenderable(
+			setup,
+			getCommandPickerRowId("provider", "google-gemini-cli"),
+		);
+		await settleScrollLayout(setup);
+
+		await submitText(setup, "/model");
+		await clickRenderable(
+			setup,
+			getCommandPickerRowId("model", "google-gemini-cli/gemini-2.5-flash"),
+		);
+		await settleScrollLayout(setup);
+
+		await submitText(setup, "/model");
+		await settleScrollLayout(setup);
+
+		expectRowsLeftAligned(
+			setup.renderer.root,
+			getCommandPickerRowId("model", "google-gemini-cli/gemini-2.5-flash"),
+			getCommandPickerRowId("model", "google-gemini-cli/gemini-2.5-pro"),
+		);
 	});
 });
 
@@ -716,6 +772,44 @@ test("the session picker groups sessions by day and filters by search", async ()
 	);
 });
 
+test("the session picker keeps the current session left aligned", async () => {
+	const sharedServices = createFakeSessionServices();
+	const now = Date.now();
+
+	sharedServices.sessionStore.createSession({
+		id: "session-one",
+		title: "Session one",
+		workspaceRoot: sharedServices.workspaceRoot,
+		model: null,
+		createdAt: now - 1_000,
+	});
+	sharedServices.sessionStore.createSession({
+		id: "session-two",
+		title: "Session two",
+		workspaceRoot: sharedServices.workspaceRoot,
+		model: null,
+		createdAt: now,
+	});
+	sharedServices.sessionStore.setLastActiveSessionId("session-two");
+
+	await withApp(
+		async (setup) => {
+			await submitText(setup, "/sessions");
+			await settleScrollLayout(setup);
+
+			expectRowsLeftAligned(
+				setup.renderer.root,
+				getCommandPickerRowId("sessions", "session-two"),
+				getCommandPickerRowId("sessions", "session-one"),
+			);
+		},
+		{ width: 110, height: 30 },
+		"~/projects/supersky:main",
+		sharedServices,
+		{ initialSessionId: "session-two" },
+	);
+});
+
 test("renaming a session saves the submitted title", async () => {
 	const sharedServices = createFakeSessionServices();
 
@@ -734,6 +828,26 @@ test("renaming a session saves the submitted title", async () => {
 		},
 		{ width: 110, height: 30 },
 		"~/projects/supersky:main",
+		sharedServices,
+	);
+});
+
+test("first user message triggers a short session rename", async () => {
+	const sharedServices = createFakeSessionServices({
+		generateSessionTitle: async () => "Fix title flow",
+	});
+
+	await withApp(
+		async (setup) => {
+			await sendMessages(setup, 1);
+			await settleScrollLayout(setup);
+
+			expect(sharedServices.sessionStore.listSessions()[0]?.title).toBe(
+				"Fix title flow",
+			);
+		},
+		undefined,
+		undefined,
 		sharedServices,
 	);
 });
