@@ -4,14 +4,12 @@ import { appMetadata } from "./config";
 type AppFooterProps = {
   isNewSession: boolean;
   projectLine: string;
-  providerName: string | null;
   modelName: string | null;
 };
 
 export function AppFooter({
   isNewSession,
   projectLine,
-  providerName,
   modelName,
 }: AppFooterProps) {
   return (
@@ -26,8 +24,6 @@ export function AppFooter({
     >
       <text fg={colors.mutedText}>{projectLine}</text>
       <text>
-        <span fg={colors.mutedText}>{providerName ?? "No provider"}</span>
-        <span fg={colors.mutedText}> · </span>
         <span fg={colors.warningText}>{modelName ?? "No model"}</span>
         <span fg={colors.mutedText}> · </span>
         <span fg={colors.mutedText}>{appMetadata.version}</span>

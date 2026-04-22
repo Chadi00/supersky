@@ -17,6 +17,7 @@ import {
   pressDown,
   pressEnter,
   pressLinefeed,
+  pressEscape,
   pressTab,
   pressUp,
   sendMessages,
@@ -40,7 +41,6 @@ test("renders the supersky TUI shell (new session)", async () => {
 
     expect(banner).not.toBeNull();
     expect(frame).not.toContain("___ _ _ _ __ ___ _ __ ___| | ___ _");
-    expect(frame).toContain("No provider");
     expect(frame).toContain("No model");
   });
 });
@@ -203,6 +203,22 @@ test("submitting /provider opens the provider picker", async () => {
   });
 });
 
+test("submitting /provider after dismissing the slash menu with escape opens the provider picker", async () => {
+  await withApp(async (setup) => {
+    await typeText(setup, "/");
+    await pressEscape(setup);
+    await typeText(setup, "provider");
+    await pressEnter(setup);
+    await settleScrollLayout(setup);
+
+    const frame = setup.captureCharFrame();
+
+    expect(frame).toContain("Select provider to connect");
+    expect(frame).toContain("GitHub Copilot");
+    expect(getComposerText(setup)).toBe("");
+  });
+});
+
 test("selecting a provider connects it and updates the footer", async () => {
   await withApp(async (setup) => {
     await submitText(setup, "/provider");
@@ -215,7 +231,6 @@ test("selecting a provider connects it and updates the footer", async () => {
     const frame = setup.captureCharFrame();
 
     expect(frame).toContain("Claude Opus 4.6");
-    expect(frame).toContain("Anthropic (Claude Pro/Max)");
   });
 });
 
@@ -228,7 +243,6 @@ test("the provider picker supports keyboard navigation", async () => {
 
     const frame = setup.captureCharFrame();
 
-    expect(frame).toContain("GitHub Copilot");
     expect(frame).toContain("GPT-4.1");
   });
 });
@@ -266,6 +280,28 @@ test("the model picker only shows models for the active provider", async () => {
   });
 });
 
+test("submitting /model after dismissing the slash menu with escape opens the model picker", async () => {
+  await withApp(async (setup) => {
+    await submitText(setup, "/provider");
+    await clickRenderable(
+      setup,
+      getCommandPickerRowId("provider", "anthropic"),
+    );
+    await settleScrollLayout(setup);
+
+    await typeText(setup, "/");
+    await pressEscape(setup);
+    await typeText(setup, "model");
+    await pressEnter(setup);
+    await settleScrollLayout(setup);
+
+    const frame = setup.captureCharFrame();
+
+    expect(frame).toContain("Select model for Anthropic (Claude Pro/Max)");
+    expect(getComposerText(setup)).toBe("");
+  });
+});
+
 test("selecting a model updates the footer", async () => {
   await withApp(async (setup) => {
     await submitText(setup, "/provider");
@@ -281,7 +317,6 @@ test("selecting a model updates the footer", async () => {
 
     const frame = setup.captureCharFrame();
 
-    expect(frame).toContain("Google");
     expect(frame).toContain("Gemini 2.5 Flash");
   });
 });
@@ -343,7 +378,6 @@ test("selected provider and model persist across /new", async () => {
 
     expect(frame).toContain("supersky");
     expect(frame).not.toContain("new session please");
-    expect(frame).toContain("Google");
     expect(frame).toContain("Gemini 2.5 Flash");
   });
 });
@@ -371,7 +405,6 @@ test("switching back to a connected provider restores its previous model", async
 
     const frame = setup.captureCharFrame();
 
-    expect(frame).toContain("Google");
     expect(frame).toContain("Gemini 2.5 Flash");
   });
 });
@@ -653,6 +686,36 @@ test("hides the sidebar on narrow terminals", async () => {
       await sendMessages(setup, 1);
 
       expect(isSidebarVisible(setup)).toBe(false);
+    },
+    { width: SIDEBAR_LAYOUT_WIDTH - 1, height: 30 },
+  );
+});
+
+test("uses a shorter block welcome banner when the sidebar would not fit", async () => {
+  let wideBannerWidth = 0;
+
+  await withApp(
+    async (setup) => {
+      const banner = findRenderableByConstructorName(
+        setup.renderer.root,
+        "ASCIIFontRenderable",
+      );
+
+      expect(banner).not.toBeNull();
+      wideBannerWidth = banner?.width ?? 0;
+    },
+    { width: SIDEBAR_LAYOUT_WIDTH, height: 30 },
+  );
+
+  await withApp(
+    async (setup) => {
+      const banner = findRenderableByConstructorName(
+        setup.renderer.root,
+        "ASCIIFontRenderable",
+      );
+
+      expect(banner).not.toBeNull();
+      expect(banner?.width ?? 0).toBeLessThan(wideBannerWidth);
     },
     { width: SIDEBAR_LAYOUT_WIDTH - 1, height: 30 },
   );

@@ -466,6 +466,12 @@ export function Composer({
     );
   }, [commandPickerState]);
 
+  // When the session dismisses a composer menu (e.g. Escape), the token increments.
+  // React only to token changes. Do not list `commandPickerState` here: with a
+  // non-zero token, opening a provider/model picker would re-run the effect and
+  // call `onCommandPickerClose`, immediately closing the menu the user just opened.
+  // The session controller already clears `activePicker` on Escape; this effect only
+  // syncs local slash-menu and selection state.
   useEffect(() => {
     if (dismissComposerMenuToken === 0) {
       return;
@@ -474,10 +480,7 @@ export function Composer({
     setSlashMenuQuery(null);
     setSelectedSlashCommandIndex(0);
     setSelectedCommandPickerIndex(0);
-    if (commandPickerState) {
-      onCommandPickerClose();
-    }
-  }, [commandPickerState, dismissComposerMenuToken, onCommandPickerClose]);
+  }, [dismissComposerMenuToken]);
 
   useKeyboard((key) => {
     if (!focused || key.name !== "escape" || !commandPickerState) {

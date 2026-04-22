@@ -11,12 +11,15 @@ const SIDEBAR_MAX_WIDTH = 34;
 const SIDEBAR_WIDTH_RATIO = 0.26;
 const WELCOME_COMPOSER_MIN_WIDTH = 36;
 const WELCOME_COMPOSER_MAX_WIDTH = 72;
+export const WELCOME_BANNER_FULL_TEXT = "supersky";
+export const WELCOME_BANNER_SHORT_TEXT = "SPSY";
 
 export type SessionLayout = {
   isCompact: boolean;
   showSidebar: boolean;
   sidebarWidth: number;
   welcomeComposerWidth: number;
+  welcomeBannerText: string;
 };
 
 export function deriveSessionLayout(
@@ -40,5 +43,9 @@ export function deriveSessionLayout(
       WELCOME_COMPOSER_MAX_WIDTH,
       Math.max(WELCOME_COMPOSER_MIN_WIDTH, Math.floor(width * 0.48)),
     ),
+    welcomeBannerText:
+      width >= SIDEBAR_LAYOUT_WIDTH
+        ? WELCOME_BANNER_FULL_TEXT
+        : WELCOME_BANNER_SHORT_TEXT,
   };
 }

@@ -27,7 +27,6 @@ export function App({ projectLine }: AppProps) {
     submit,
     showPreviousHistory,
     showNextHistory,
-    activeProvider,
     activeModel,
     commandPickerState,
     closeCommandPicker,
@@ -45,6 +44,7 @@ export function App({ projectLine }: AppProps) {
       <box flexGrow={1} flexDirection="column" minHeight={0}>
         {isNewSession ? (
           <WelcomeScreen
+            bannerText={layout.welcomeBannerText}
             composerWidth={layout.welcomeComposerWidth}
             draft={state.draft}
             commandNotice={commandNotice}
@@ -109,7 +109,6 @@ export function App({ projectLine }: AppProps) {
       <AppFooter
         isNewSession={isNewSession}
         projectLine={projectLine}
-        providerName={activeProvider?.name ?? null}
         modelName={activeModel?.name ?? null}
       />
     </box>

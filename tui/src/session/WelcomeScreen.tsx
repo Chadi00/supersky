@@ -3,6 +3,7 @@ import { Composer } from "./Composer";
 import type { CommandPickerState } from "./commandPicker";
 
 type WelcomeScreenProps = {
+  bannerText: string;
   composerWidth: number;
   draft: string;
   commandNotice: string | null;
@@ -21,6 +22,7 @@ type WelcomeScreenProps = {
 };
 
 export function WelcomeScreen({
+  bannerText,
   composerWidth,
   draft,
   commandNotice,
@@ -47,7 +49,7 @@ export function WelcomeScreen({
     >
       <box flexDirection="column" alignItems="center" gap={0} marginBottom={1}>
         <box height={7} justifyContent="center" alignItems="center">
-          <ascii-font font="block" text="supersky" color={colors.bannerText} />
+          <ascii-font font="block" text={bannerText} color={colors.bannerText} />
         </box>
       </box>
 
