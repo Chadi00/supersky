@@ -1,8 +1,6 @@
-import { useEffect, useState } from "react";
-
 import type { SuperskyToolDefinition } from "../agent/tools/types";
-import { BRAILLE_SPINNER_FRAMES } from "../shared/brailleSpinner";
 import { colors } from "../shared/theme";
+import { useBrailleSpinnerFrame } from "../shared/useBrailleSpinnerFrame";
 import type { AgentToolResult } from "../vendor/pi-agent-core/index.js";
 import type {
 	AssistantMessage as AssistantMessageValue,
@@ -47,16 +45,7 @@ function getPreviewText(text: string, maxLines = 10) {
 }
 
 export function AssistantStreamingIndicator() {
-	const [frameIndex, setFrameIndex] = useState(0);
-
-	useEffect(() => {
-		const id = setInterval(() => {
-			setFrameIndex((i) => (i + 1) % BRAILLE_SPINNER_FRAMES.length);
-		}, 80);
-		return () => clearInterval(id);
-	}, []);
-
-	const frame = BRAILLE_SPINNER_FRAMES[frameIndex];
+	const frame = useBrailleSpinnerFrame();
 	return (
 		<text>
 			<span fg={colors.accentText}>{frame}</span>

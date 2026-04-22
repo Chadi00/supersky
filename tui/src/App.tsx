@@ -221,6 +221,7 @@ function AppContent({ projectLine, services, initialSessionId }: AppProps) {
 
 			<AppFooter
 				isNewSession={isNewSession}
+				isRunning={state.isStreaming}
 				projectLine={projectLine}
 				modelName={modelLabel}
 				onMouseDown={focusComposer}

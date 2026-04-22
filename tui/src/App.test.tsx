@@ -214,14 +214,17 @@ test("submitting from the welcome screen switches to the session view immediatel
 				"ASCIIFontRenderable",
 			);
 
-			expect(banner).toBeNull();
-			expect(getComposerText(setup)).toBe("");
-			expect(setup.captureCharFrame()).toContain("hello from welcome");
-			expect(setup.captureCharFrame()).toContain("Working...");
-			expect(setup.captureCharFrame()).not.toContain("Handled request.");
-		},
-		{ width: 110, height: 30 },
-		"~/projects/supersky:main",
+				expect(banner).toBeNull();
+				expect(getComposerText(setup)).toBe("");
+				const frame = setup.captureCharFrame();
+
+				expect(frame).toContain("hello from welcome");
+				expect(frame).toContain("Working...");
+				expect(frame).toContain("⢀⠀ ~/projects/supersky:main");
+				expect(frame).not.toContain("Handled request.");
+			},
+			{ width: 110, height: 30 },
+			"~/projects/supersky:main",
 		services,
 	);
 });
