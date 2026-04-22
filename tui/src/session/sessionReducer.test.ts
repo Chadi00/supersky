@@ -65,6 +65,7 @@ test("clears pending user messages once the runtime transcript contains them", (
 		{
 			type: "runtimeStateReplaced",
 			messages: [submittedMessage, assistantMessage],
+			pendingBashMessages: [],
 			streamingMessage: null,
 			toolExecutions: [],
 			isStreaming: false,
@@ -85,6 +86,7 @@ test("replaces runtime-managed transcript state from the agent snapshot", () => 
 	const nextState = sessionReducer(createInitialSessionState(), {
 		type: "runtimeStateReplaced",
 		messages,
+		pendingBashMessages: [],
 		streamingMessage: null,
 		toolExecutions: [],
 		isStreaming: false,
@@ -147,6 +149,7 @@ test("resets the session while bumping the composer reset token", () => {
 			historyIndex: 0,
 			historyDraft: "work in progress",
 			messages: [createUserMessage("hello", 1)],
+			pendingBashMessages: [],
 			pendingUserMessages: [],
 			streamingMessage: createAssistantMessage(2),
 			toolExecutions: [

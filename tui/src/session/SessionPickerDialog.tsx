@@ -147,7 +147,9 @@ export function SessionPickerDialog({
 	const { width, height } = useTerminalDimensions();
 	const scrollboxRef = useRef<ScrollBoxRenderable | null>(null);
 	const [query, setQuery] = useState("");
-	const [selectedIndex, setSelectedIndex] = useState(0);
+	const [selectedItemId, setSelectedItemId] = useState<string | null>(
+		state.selectedItemId ?? state.items[0]?.id ?? null,
+	);
 	const [spinnerFrameIndex, setSpinnerFrameIndex] = useState(0);
 
 	const filteredItems = useMemo(
@@ -163,7 +165,13 @@ export function SessionPickerDialog({
 		const maxVisibleRows = Math.max(4, Math.floor(height / 2) - 6);
 		return Math.max(1, Math.min(rows || 1, maxVisibleRows));
 	}, [groupedItems, height]);
-	const selectedItem = filteredItems[selectedIndex] ?? filteredItems[0] ?? null;
+	const selectedIndex = selectedItemId
+		? filteredItems.findIndex((item) => item.id === selectedItemId)
+		: -1;
+	const selectedItem =
+		(selectedIndex >= 0 ? filteredItems[selectedIndex] : null) ??
+		filteredItems[0] ??
+		null;
 	const dialogWidth = Math.max(56, Math.min(DIALOG_WIDTH, width - 2));
 
 	useEffect(() => {
@@ -182,20 +190,25 @@ export function SessionPickerDialog({
 
 	useEffect(() => {
 		if (filteredItems.length === 0) {
-			setSelectedIndex(0);
+			setSelectedItemId(null);
 			return;
 		}
 
-		if (normalizeQuery(query)) {
-			setSelectedIndex(0);
-			return;
-		}
+		setSelectedItemId((currentId) => {
+			if (currentId && filteredItems.some((item) => item.id === currentId)) {
+				return currentId;
+			}
 
-		const currentIndex = filteredItems.findIndex(
-			(item) => item.id === state.selectedItemId,
-		);
-		setSelectedIndex(currentIndex >= 0 ? currentIndex : 0);
-	}, [filteredItems, query, state.selectedItemId]);
+			if (
+				state.selectedItemId &&
+				filteredItems.some((item) => item.id === state.selectedItemId)
+			) {
+				return state.selectedItemId;
+			}
+
+			return filteredItems[0]?.id ?? null;
+		});
+	}, [filteredItems, state.selectedItemId]);
 
 	useEffect(() => {
 		if (
@@ -218,30 +231,35 @@ export function SessionPickerDialog({
 
 	const moveSelection = (direction: number) => {
 		if (filteredItems.length === 0) {
-			setSelectedIndex(0);
+			setSelectedItemId(null);
 			return;
 		}
 
-		setSelectedIndex((currentIndex) => {
-			const nextIndex = currentIndex + direction;
+		setSelectedItemId((currentId) => {
+			const currentIndex = currentId
+				? filteredItems.findIndex((item) => item.id === currentId)
+				: -1;
+			const baseIndex = currentIndex >= 0 ? currentIndex : 0;
+			const nextIndex = baseIndex + direction;
 			if (nextIndex < 0) {
-				return filteredItems.length - 1;
+				return filteredItems[filteredItems.length - 1]?.id ?? null;
 			}
 			if (nextIndex >= filteredItems.length) {
-				return 0;
+				return filteredItems[0]?.id ?? null;
 			}
-			return nextIndex;
+			return filteredItems[nextIndex]?.id ?? null;
 		});
 	};
 
 	const moveSelectionTo = (nextIndex: number) => {
 		if (filteredItems.length === 0) {
-			setSelectedIndex(0);
+			setSelectedItemId(null);
 			return;
 		}
 
-		setSelectedIndex(
-			Math.max(0, Math.min(filteredItems.length - 1, nextIndex)),
+		setSelectedItemId(
+			filteredItems[Math.max(0, Math.min(filteredItems.length - 1, nextIndex))]
+				?.id ?? null,
 		);
 	};
 
@@ -415,10 +433,7 @@ export function SessionPickerDialog({
 											</text>
 										</box>
 										{group.items.map((item) => {
-											const itemIndex = filteredItems.findIndex(
-												(entry) => entry.id === item.id,
-											);
-											const isSelected = itemIndex === selectedIndex;
+											const isSelected = item.id === selectedItem?.id;
 											const rowBackground = isSelected
 												? item.isDeletePending
 													? SESSION_ERROR_BACKGROUND
@@ -449,7 +464,7 @@ export function SessionPickerDialog({
 													paddingRight={3}
 													gap={1}
 													onMouseMove={() => {
-														setSelectedIndex(itemIndex);
+														setSelectedItemId(item.id);
 													}}
 													onMouseDown={(event) => {
 														if (event.button !== 0) {
@@ -457,7 +472,7 @@ export function SessionPickerDialog({
 														}
 														event.preventDefault();
 														event.stopPropagation();
-														setSelectedIndex(itemIndex);
+														setSelectedItemId(item.id);
 													}}
 													onMouseUp={(event) => {
 														if (event.button !== 0) {

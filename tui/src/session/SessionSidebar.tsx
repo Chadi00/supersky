@@ -1,8 +1,8 @@
 import { useState } from "react";
 
-import { sidebarData } from "../app/config";
 import { colors } from "../shared/theme";
 import { SIDEBAR_MIN_WIDTH } from "./layout";
+import type { SessionModifiedFile } from "./sessionFileDiff";
 
 const SIDEBAR_USAGE_LINE_KEYS = ["tokens", "percent", "cost"] as const;
 
@@ -10,6 +10,9 @@ type SessionSidebarProps = {
 	sessionTitle: string;
 	/** Context/cost lines (tokens, % used, $ spent) — from live session, pi-mono compatible. */
 	usage: readonly string[];
+	/** Files mutated in this session (`edit` / `write` tools), aggregated like OpenCode session diffs. */
+	modifiedFiles: readonly SessionModifiedFile[];
+	/** When false, never show the section. When true, the section is omitted if `modifiedFiles` is empty. */
 	showModified?: boolean;
 	onMouseDown?: () => void;
 };
@@ -17,6 +20,7 @@ type SessionSidebarProps = {
 export function SessionSidebar({
 	sessionTitle,
 	usage,
+	modifiedFiles,
 	showModified = true,
 	onMouseDown,
 }: SessionSidebarProps) {
@@ -49,11 +53,13 @@ export function SessionSidebar({
 					</text>
 				))}
 			</box>
-			{showModified ? (
+			{showModified && modifiedFiles.length > 0 ? (
 				<box flexDirection="column" gap={0}>
 					{/* biome-ignore lint/a11y/noStaticElementInteractions: Toggle modified-files section visibility. */}
 					<box
 						flexDirection="row"
+						gap={1}
+						alignItems="center"
 						onMouseDown={(event) => {
 							if (event.button !== 0) {
 								return;
@@ -63,17 +69,40 @@ export function SessionSidebar({
 							onMouseDown?.();
 						}}
 					>
-						<text fg={colors.dimText}>
-							Modified files{" "}
-							<span fg={colors.dimText}>{modifiedFilesOpen ? "▼" : "▶"}</span>
-						</text>
+						<text fg={colors.dimText}>{modifiedFilesOpen ? "▼" : "▶"}</text>
+						<text fg={colors.dimText}>Modified files</text>
 					</box>
 					{modifiedFilesOpen
-						? sidebarData.modifiedFiles.map((file) => (
-								<text key={file.path}>
-									<span fg={colors.successText}>{file.delta}</span>
-									<span fg={colors.dimText}> {file.path}</span>
-								</text>
+						? modifiedFiles.map((file) => (
+								<box
+									key={file.path}
+									width="100%"
+									flexDirection="row"
+									justifyContent="space-between"
+									gap={1}
+								>
+									<box flexGrow={1} flexShrink={1} minWidth={0}>
+										<text fg={colors.dimText}>{file.path}</text>
+									</box>
+									<box flexShrink={0}>
+										<text>
+											{file.additions > 0 ? (
+												<span fg={colors.successText}>+{file.additions}</span>
+											) : null}
+											{file.additions > 0 && file.deletions > 0 ? (
+												<span fg={colors.dimText}> </span>
+											) : null}
+											{file.deletions > 0 ? (
+												<span fg={colors.diffDeleteText}>
+													-{file.deletions}
+												</span>
+											) : null}
+											{file.additions === 0 && file.deletions === 0 ? (
+												<span fg={colors.dimText}>—</span>
+											) : null}
+										</text>
+									</box>
+								</box>
 							))
 						: null}
 				</box>

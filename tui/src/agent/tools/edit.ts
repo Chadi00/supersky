@@ -37,6 +37,8 @@ export type EditToolInput = Static<typeof schema>;
 
 export interface EditToolDetails {
 	absolutePath: string;
+	beforeContent: string;
+	afterContent: string;
 	diff: string;
 	editCount: number;
 }
@@ -157,6 +159,8 @@ export function createEditTool(
 					],
 					details: {
 						absolutePath,
+						beforeContent: original,
+						afterContent: updated,
 						diff,
 						editCount: args.edits.length,
 					},

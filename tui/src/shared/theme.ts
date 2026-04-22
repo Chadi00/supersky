@@ -9,6 +9,7 @@ export const colors = {
 	mutedText: "#5a5a5a",
 	dimText: "#8a8a8a",
 	successText: "#4ade80",
+	diffDeleteText: "#f87171",
 	accentText: "#7cc6ff",
 	verificationText: "#f472b6",
 	warningText: "#fbbf24",

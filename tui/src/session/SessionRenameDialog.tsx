@@ -4,6 +4,7 @@ import { colors } from "../shared/theme";
 export type SessionRenameDialogState = {
 	sessionId: string;
 	value: string;
+	returnToSessionsDialog?: boolean;
 };
 
 type SessionRenameDialogProps = {

@@ -1,6 +1,7 @@
 import type { ScrollBoxRenderable } from "@opentui/core";
 import { useCallback } from "react";
 
+import type { BashExecutionMessage } from "../agent/bashExecutionTypes";
 import type { SuperskyToolDefinition } from "../agent/tools/types";
 import { colors } from "../shared/theme";
 import { formatMessageTimestamp } from "../shared/time";
@@ -18,6 +19,7 @@ import {
 
 type MessageListProps = {
 	messages: SessionState["messages"];
+	pendingBashMessages: BashExecutionMessage[];
 	pendingUserMessages: SessionState["pendingUserMessages"];
 	streamingMessage: SessionState["streamingMessage"];
 	isStreaming: SessionState["isStreaming"];
@@ -31,6 +33,7 @@ type MessageListProps = {
 
 export function MessageList({
 	messages,
+	pendingBashMessages,
 	pendingUserMessages,
 	streamingMessage,
 	isStreaming,
@@ -77,6 +80,65 @@ export function MessageList({
 		const count = seenAssistantKeys.get(baseKey) ?? 0;
 		seenAssistantKeys.set(baseKey, count + 1);
 		return count === 0 ? baseKey : `${baseKey}-${count + 1}`;
+	};
+
+	const renderBashExecution = (
+		message: BashExecutionMessage,
+		keyPrefix: string,
+	) => {
+		const headerColor = message.excludeFromContext
+			? colors.mutedText
+			: colors.accentText;
+		const preview =
+			message.output.length > 4000
+				? `${message.output.slice(0, 4000)}\n…`
+				: message.output;
+		const statusParts: string[] = [];
+		if (message.cancelled) {
+			statusParts.push("(cancelled)");
+		} else if (
+			message.exitCode !== undefined &&
+			message.exitCode !== null &&
+			message.exitCode !== 0
+		) {
+			statusParts.push(`exit ${message.exitCode}`);
+		}
+		if (message.truncated && message.fullOutputPath) {
+			statusParts.push(`truncated; full: ${message.fullOutputPath}`);
+		}
+		const statusLine = statusParts.length ? statusParts.join(" · ") : null;
+
+		return (
+			<box
+				key={`${keyPrefix}-bash-${message.timestamp}-${message.command.slice(0, 24)}`}
+				flexDirection="column"
+				marginBottom={1}
+			>
+				<box
+					border
+					borderColor={
+						message.excludeFromContext ? colors.mutedText : colors.toolBorder
+					}
+					paddingX={1}
+					paddingY={1}
+					flexDirection="column"
+					gap={0}
+				>
+					<text fg={headerColor}>{`$ ${message.command}`}</text>
+					{preview ? (
+						<text fg={colors.dimText}>{preview}</text>
+					) : (
+						<text fg={colors.dimText}>(no output)</text>
+					)}
+					{statusLine ? (
+						<text fg={colors.warningText}>{statusLine}</text>
+					) : null}
+					<text fg={colors.dimText}>
+						{formatMessageTimestamp(new Date(message.timestamp))}
+					</text>
+				</box>
+			</box>
+		);
 	};
 
 	const renderUserMessage = (
@@ -137,7 +199,12 @@ export function MessageList({
 							liveToolExecutionsByCallId={liveToolExecutionsByCallId}
 							toolDefinitions={toolDefinitions}
 						/>
+					) : message.role === "bashExecution" ? (
+						renderBashExecution(message, "committed")
 					) : null,
+				)}
+				{pendingBashMessages.map((message) =>
+					renderBashExecution(message, "pending-bash"),
 				)}
 				{pendingUserMessages.map((message) =>
 					renderUserMessage(message, "pending-user"),

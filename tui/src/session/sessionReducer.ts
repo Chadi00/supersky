@@ -1,3 +1,4 @@
+import type { BashExecutionMessage } from "../agent/bashExecutionTypes";
 import type { AgentMessage } from "../vendor/pi-agent-core/index.js";
 import type { AssistantMessage, UserMessage } from "../vendor/pi-ai/index.js";
 import {
@@ -16,6 +17,7 @@ export type SessionAction =
 	| {
 			type: "runtimeStateReplaced";
 			messages: AgentMessage[];
+			pendingBashMessages?: BashExecutionMessage[];
 			streamingMessage: AssistantMessage | null;
 			toolExecutions: ToolExecutionState[];
 			isStreaming: boolean;
@@ -141,6 +143,7 @@ export function sessionReducer(
 			return {
 				...state,
 				messages: action.messages,
+				pendingBashMessages: action.pendingBashMessages ?? [],
 				pendingUserMessages,
 				streamingMessage: action.streamingMessage,
 				toolExecutions: action.toolExecutions,

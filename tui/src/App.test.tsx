@@ -19,6 +19,7 @@ import {
 	isSidebarVisible,
 	moveMouseToRenderable,
 	pressCtrlC,
+	pressCtrlD,
 	pressCtrlK,
 	pressCtrlN,
 	pressDown,
@@ -49,6 +50,7 @@ function createDelayedRuntime(sessionId: string): AgentRuntimeLike {
 	return {
 		agent: { state } as unknown as AgentRuntimeLike["agent"],
 		sessionId,
+		cwd: process.cwd(),
 		toolDefinitions: {} as AgentRuntimeLike["toolDefinitions"],
 		setModel(model) {
 			state.model = model as unknown;
@@ -660,6 +662,22 @@ test("reopening supersky starts on the welcome page instead of the last session"
 	);
 });
 
+test("launching supersky without sending a message does not create a session", async () => {
+	const sharedServices = createFakeSessionServices();
+
+	await withApp(
+		(setup) => {
+			expect(setup.captureCharFrame()).toContain("supersky");
+			expect(sharedServices.sessionStore.listSessions()).toHaveLength(0);
+		},
+		{ width: 110, height: 30 },
+		"~/projects/supersky:main",
+		sharedServices,
+	);
+
+	expect(sharedServices.sessionStore.listSessions()).toHaveLength(0);
+});
+
 test("launching with a session id opens that session directly", async () => {
 	const sharedServices = createFakeSessionServices();
 	const sessionId = "stored-session";
@@ -802,6 +820,105 @@ test("the session picker keeps the current session left aligned", async () => {
 				getCommandPickerRowId("sessions", "session-two"),
 				getCommandPickerRowId("sessions", "session-one"),
 			);
+		},
+		{ width: 110, height: 30 },
+		"~/projects/supersky:main",
+		sharedServices,
+		{ initialSessionId: "session-two" },
+	);
+});
+
+test("the session picker keyboard navigation switches sessions without snapping back", async () => {
+	const sharedServices = createFakeSessionServices();
+	const now = Date.now();
+
+	sharedServices.sessionStore.createSession({
+		id: "session-one",
+		title: "Session one",
+		workspaceRoot: sharedServices.workspaceRoot,
+		model: null,
+		createdAt: now - 1_000,
+	});
+	sharedServices.sessionStore.replaceSessionMessages(
+		"session-one",
+		createStoredSessionMessages("first saved message"),
+	);
+	sharedServices.sessionStore.createSession({
+		id: "session-two",
+		title: "Session two",
+		workspaceRoot: sharedServices.workspaceRoot,
+		model: null,
+		createdAt: now,
+	});
+	sharedServices.sessionStore.replaceSessionMessages(
+		"session-two",
+		createStoredSessionMessages("second saved message"),
+	);
+	sharedServices.sessionStore.setLastActiveSessionId("session-two");
+
+	await withApp(
+		async (setup) => {
+			await submitText(setup, "/sessions");
+			await settleScrollLayout(setup);
+
+			await pressDown(setup);
+			await pressEnter(setup);
+			await settleScrollLayout(setup);
+
+			const frame = setup.captureCharFrame();
+
+			expect(frame).toContain("first saved message");
+			expect(frame).not.toContain("second saved message");
+		},
+		{ width: 110, height: 30 },
+		"~/projects/supersky:main",
+		sharedServices,
+		{ initialSessionId: "session-two" },
+	);
+});
+
+test("the session picker keeps the navigated row selected across rerenders", async () => {
+	const sharedServices = createFakeSessionServices();
+	const now = Date.now();
+
+	sharedServices.sessionStore.createSession({
+		id: "session-one",
+		title: "Session one",
+		workspaceRoot: sharedServices.workspaceRoot,
+		model: null,
+		createdAt: now - 1_000,
+	});
+	sharedServices.sessionStore.createSession({
+		id: "session-two",
+		title: "Session two",
+		workspaceRoot: sharedServices.workspaceRoot,
+		model: null,
+		createdAt: now,
+	});
+	sharedServices.sessionStore.setLastActiveSessionId("session-two");
+
+	await withApp(
+		async (setup) => {
+			await submitText(setup, "/sessions");
+			await settleScrollLayout(setup);
+
+			await pressDown(setup);
+			await pressCtrlD(setup);
+			await settleScrollLayout(setup);
+
+			let frame = setup.captureCharFrame();
+
+			expect(frame).toContain("Press Ctrl+D again to confirm");
+
+			await pressCtrlD(setup);
+			await settleScrollLayout(setup);
+
+			frame = setup.captureCharFrame();
+			expect(frame).toContain("Session deleted.");
+			expect(sharedServices.sessionStore.getSession("session-one")).toBeNull();
+			expect(
+				sharedServices.sessionStore.getSession("session-two"),
+			).not.toBeNull();
 		},
 		{ width: 110, height: 30 },
 		"~/projects/supersky:main",
@@ -1226,17 +1343,27 @@ test("ctrl+n resets an in-session view back to the welcome screen", async () => 
 });
 
 test("slash new resets an in-session view back to the welcome screen", async () => {
-	await withApp(async (setup) => {
-		await submitText(setup, "new session please");
-		await submitText(setup, "/new");
-		await settleScrollLayout(setup);
+	const sharedServices = createFakeSessionServices();
 
-		const frame = setup.captureCharFrame();
+	await withApp(
+		async (setup) => {
+			await submitText(setup, "new session please");
+			await submitText(setup, "/new");
+			await settleScrollLayout(setup);
 
-		expect(frame).toContain("supersky");
-		expect(frame).not.toContain("new session please");
-		expect(frame).not.toContain("Assistant");
-	});
+			const frame = setup.captureCharFrame();
+
+			expect(frame).toContain("supersky");
+			expect(frame).not.toContain("new session please");
+			expect(frame).not.toContain("Assistant");
+			expect(sharedServices.sessionStore.listSessions()).toHaveLength(1);
+		},
+		undefined,
+		undefined,
+		sharedServices,
+	);
+
+	expect(sharedServices.sessionStore.listSessions()).toHaveLength(1);
 });
 
 test("opening the command menu does not move the in-session composer", async () => {

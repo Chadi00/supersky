@@ -109,6 +109,9 @@ function estimateTokens(message: AgentMessage): number {
 		return Math.ceil(chars / 4);
 	}
 	if (role === "bashExecution") {
+		if (m.excludeFromContext) {
+			return 0;
+		}
 		chars = String(m.command).length + String(m.output).length;
 		return Math.ceil(chars / 4);
 	}

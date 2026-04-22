@@ -226,6 +226,13 @@ export async function pressCtrlK(setup: AppTestSetup) {
 	});
 }
 
+export async function pressCtrlD(setup: AppTestSetup) {
+	await runInput(setup, () => setup.mockInput.pressKey("d", { ctrl: true }), {
+		renderPasses: 2,
+		settleMs: 0,
+	});
+}
+
 export async function pressUp(setup: AppTestSetup) {
 	await runInput(setup, () => setup.mockInput.pressArrow("up"), {
 		renderPasses: 2,

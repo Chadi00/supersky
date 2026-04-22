@@ -1,5 +1,6 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { createPatch } from "diff";
 import type { Static } from "../../vendor/pi-ai/index.js";
 import { Type } from "../../vendor/pi-ai/index.js";
 import { withFileMutationQueue } from "./fileMutationQueue";
@@ -18,6 +19,11 @@ export type WriteToolInput = Static<typeof schema>;
 export interface WriteToolDetails {
 	absolutePath: string;
 	bytes: number;
+	beforeExisted: boolean;
+	beforeContent: string;
+	afterContent: string;
+	/** Unified diff vs previous file contents (empty before if the file was new). */
+	diff: string;
 }
 
 export function createWriteTool(
@@ -37,10 +43,20 @@ export function createWriteTool(
 		},
 		async execute(_toolCallId, args) {
 			const absolutePath = resolveToCwd(args.path, cwd);
+			let before = "";
+			let beforeExisted = true;
+			try {
+				before = (await readFile(absolutePath)).toString("utf8");
+			} catch {
+				before = "";
+				beforeExisted = false;
+			}
 			await withFileMutationQueue(absolutePath, async () => {
 				await mkdir(dirname(absolutePath), { recursive: true });
 				await writeFile(absolutePath, args.content, "utf8");
 			});
+			const after = args.content;
+			const diff = createPatch(args.path, before, after, "before", "after");
 			return {
 				content: [
 					{
@@ -51,6 +67,10 @@ export function createWriteTool(
 				details: {
 					absolutePath,
 					bytes: args.content.length,
+					beforeExisted,
+					beforeContent: before,
+					afterContent: after,
+					diff,
 				},
 			};
 		},

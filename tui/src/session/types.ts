@@ -1,3 +1,4 @@
+import type { BashExecutionMessage } from "../agent/bashExecutionTypes";
 import type {
 	AgentMessage,
 	AgentToolResult,
@@ -23,6 +24,8 @@ export type ToolExecutionState = {
 export type SessionState = {
 	draft: string;
 	messages: AgentMessage[];
+	/** Composer `!` / `!!` shell runs waiting to merge into the transcript after the current model turn. */
+	pendingBashMessages: BashExecutionMessage[];
 	pendingUserMessages: UserMessage[];
 	streamingMessage: AssistantMessage | null;
 	toolExecutions: ToolExecutionState[];
@@ -63,6 +66,7 @@ export function createInitialSessionState(): SessionState {
 	return {
 		draft: "",
 		messages: [],
+		pendingBashMessages: [],
 		pendingUserMessages: [],
 		streamingMessage: null,
 		toolExecutions: [],

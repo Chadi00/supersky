@@ -39,6 +39,7 @@ function AppContent({ projectLine, services, initialSessionId }: AppProps) {
 	const {
 		state,
 		sessionSidebarUsage,
+		sessionSidebarModifiedFiles,
 		isNewSession,
 		hasSubmittedUserMessages,
 		isBrowsingHistory,
@@ -173,6 +174,7 @@ function AppContent({ projectLine, services, initialSessionId }: AppProps) {
 						>
 							<MessageList
 								messages={state.messages}
+								pendingBashMessages={state.pendingBashMessages}
 								pendingUserMessages={state.pendingUserMessages}
 								streamingMessage={state.streamingMessage}
 								isStreaming={state.isStreaming}
@@ -208,6 +210,7 @@ function AppContent({ projectLine, services, initialSessionId }: AppProps) {
 								<SessionSidebar
 									sessionTitle={sessionTitle}
 									usage={sessionSidebarUsage}
+									modifiedFiles={sessionSidebarModifiedFiles}
 									onMouseDown={focusComposer}
 								/>
 							</box>
@@ -248,7 +251,9 @@ function AppContent({ projectLine, services, initialSessionId }: AppProps) {
 					onSelect={selectCommandPickerItem}
 					onRename={(sessionId) => {
 						closeCommandPicker();
-						openSessionRenameDialog(sessionId);
+						openSessionRenameDialog(sessionId, {
+							returnToSessionsDialog: true,
+						});
 					}}
 					onCopy={copySessionIdFromPicker}
 					onDelete={toggleSessionDelete}

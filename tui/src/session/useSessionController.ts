@@ -7,7 +7,9 @@ import {
 	useRef,
 	useState,
 } from "react";
+import type { BashExecutionMessage } from "../agent/bashExecutionTypes";
 import { type AgentRuntimeLike, SuperskyAgentRuntime } from "../agent/runtime";
+import { executeUserShellCommand } from "../agent/userShell";
 import { copyToClipboard } from "../app/clipboard";
 import { destroyRendererAndExit } from "../shared/lifecycle";
 import type {
@@ -50,6 +52,10 @@ import {
 	type SessionServices,
 } from "./providerState/services";
 import type { SessionRenameDialogState } from "./SessionRenameDialog";
+import {
+	buildSessionModifiedFiles,
+	type SessionModifiedFile,
+} from "./sessionFileDiff";
 import { sessionReducer } from "./sessionReducer";
 import { createInitialSessionState, type ToolExecutionState } from "./types";
 
@@ -68,6 +74,8 @@ type SessionRuntimeEntry = {
 	title: string;
 	runtime: AgentRuntimeLike;
 	toolExecutions: Map<string, ToolExecutionState>;
+	pendingBashMessages: BashExecutionMessage[];
+	composerShellAbort: AbortController | null;
 	unsubscribe: () => void;
 };
 
@@ -169,10 +177,12 @@ function getAvailableProviderCount(services: SessionServices) {
 function createRuntimeSnapshot(
 	runtime: AgentRuntimeLike,
 	toolExecutions: Map<string, ToolExecutionState>,
+	pendingBashMessages: BashExecutionMessage[],
 ) {
 	const streamingMessage = runtime.agent.state.streamingMessage;
 	return {
 		messages: runtime.agent.state.messages.slice(),
+		pendingBashMessages,
 		streamingMessage:
 			streamingMessage && streamingMessage.role === "assistant"
 				? streamingMessage
@@ -204,6 +214,8 @@ export function useSessionController(
 	const [dismissComposerMenuToken, setDismissComposerMenuToken] = useState(0);
 	const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
 	const [showWelcomeScreen, setShowWelcomeScreen] = useState(true);
+	const [sessionSidebarModifiedFiles, setSessionSidebarModifiedFiles] =
+		useState<SessionModifiedFile[]>([]);
 	const [activePicker, setActivePicker] = useState<ActivePickerState | null>(
 		null,
 	);
@@ -248,6 +260,7 @@ export function useSessionController(
 			dispatch({
 				type: "runtimeStateReplaced",
 				messages: [],
+				pendingBashMessages: [],
 				streamingMessage: null,
 				toolExecutions: [],
 				isStreaming: false,
@@ -260,6 +273,7 @@ export function useSessionController(
 			...createRuntimeSnapshot(
 				runtime,
 				activeEntry?.toolExecutions ?? new Map(),
+				activeEntry?.pendingBashMessages ?? [],
 			),
 		});
 	}, []);
@@ -323,9 +337,17 @@ export function useSessionController(
 						});
 						break;
 					}
-					case "agent_end":
+					case "agent_end": {
 						toolExecutions.clear();
+						const entry = sessionsRef.current.get(sessionId);
+						if (entry && entry.pendingBashMessages.length > 0) {
+							for (const bashMessage of entry.pendingBashMessages) {
+								runtime.agent.state.messages.push(bashMessage);
+							}
+							entry.pendingBashMessages = [];
+						}
 						break;
+					}
 				}
 				const entry = sessionsRef.current.get(sessionId);
 				if (!entry) return;
@@ -342,6 +364,8 @@ export function useSessionController(
 				title: "New session",
 				runtime,
 				toolExecutions,
+				pendingBashMessages: [],
+				composerShellAbort: null,
 				unsubscribe,
 			};
 			sessionsRef.current.set(sessionId, entry);
@@ -364,6 +388,25 @@ export function useSessionController(
 		[services, syncRuntimeState],
 	);
 
+	const createAndActivateSession = useCallback(
+		(model: Model<Api> | null) => {
+			const sessionId = crypto.randomUUID();
+			const entry = buildSessionRuntime(sessionId, model);
+			if (!entry) {
+				return null;
+			}
+			services.sessionStore.createSession({
+				id: sessionId,
+				title: "New session",
+				workspaceRoot: services.workspaceRoot,
+				model,
+			});
+			activateSession(sessionId);
+			return entry.runtime;
+		},
+		[activateSession, buildSessionRuntime, services],
+	);
+
 	const ensureActiveRuntime = useCallback(
 		(model: Model<Api> | null) => {
 			if (runtimeRef.current) {
@@ -373,35 +416,11 @@ export function useSessionController(
 				return runtimeRef.current;
 			}
 			if (!model) {
-				const sessionId = crypto.randomUUID();
-				services.sessionStore.createSession({
-					id: sessionId,
-					title: "New session",
-					workspaceRoot: services.workspaceRoot,
-					model: null,
-				});
-				const entry = buildSessionRuntime(sessionId, null);
-				if (!entry) {
-					return null;
-				}
-				activateSession(sessionId);
-				return entry.runtime;
+				return createAndActivateSession(null);
 			}
-			const sessionId = crypto.randomUUID();
-			services.sessionStore.createSession({
-				id: sessionId,
-				title: "New session",
-				workspaceRoot: services.workspaceRoot,
-				model,
-			});
-			const entry = buildSessionRuntime(sessionId, model);
-			if (!entry) {
-				return null;
-			}
-			activateSession(sessionId);
-			return entry.runtime;
+			return createAndActivateSession(model);
 		},
-		[activateSession, buildSessionRuntime, services],
+		[createAndActivateSession],
 	);
 
 	useEffect(() => {
@@ -545,10 +564,23 @@ export function useSessionController(
 		);
 	}, []);
 
+	const closeSessionRenameDialog = useCallback(
+		(restoreSessionsDialog: boolean) => {
+			sessionRenameValueRef.current = "";
+			setSessionRenameDialogState(null);
+			if (restoreSessionsDialog) {
+				setPendingDeleteSessionId(null);
+				setActivePicker({ kind: "sessions" });
+			}
+		},
+		[],
+	);
+
 	const cancelSessionRename = useCallback(() => {
-		sessionRenameValueRef.current = "";
-		setSessionRenameDialogState(null);
-	}, []);
+		closeSessionRenameDialog(
+			Boolean(sessionRenameDialogState?.returnToSessionsDialog),
+		);
+	}, [closeSessionRenameDialog, sessionRenameDialogState]);
 
 	const updateSessionTitle = useCallback(
 		(sessionId: string, title: string) => {
@@ -624,10 +656,9 @@ export function useSessionController(
 		const nextTitle =
 			sessionRenameValueRef.current.trim() || DEFAULT_SESSION_TITLE;
 		updateSessionTitle(dialog.sessionId, nextTitle);
-		sessionRenameValueRef.current = "";
-		setSessionRenameDialogState(null);
+		closeSessionRenameDialog(Boolean(dialog.returnToSessionsDialog));
 		setCommandNotice("Session renamed.");
-	}, [sessionRenameDialogState, updateSessionTitle]);
+	}, [closeSessionRenameDialog, sessionRenameDialogState, updateSessionTitle]);
 
 	const selectModel = useCallback(
 		(model: Model<Api>) => {
@@ -656,26 +687,16 @@ export function useSessionController(
 	const resetSession = useCallback(() => {
 		setCommandNotice(null);
 		setActivePicker(null);
-		const model = activeModelRef.current;
-		const sessionId = crypto.randomUUID();
-		services.sessionStore.createSession({
-			id: sessionId,
-			title: "New session",
-			workspaceRoot: services.workspaceRoot,
-			model: model ?? null,
-		});
-		const entry = buildSessionRuntime(sessionId, model ?? null);
-		if (!entry) {
-			return;
-		}
-		activateSession(sessionId);
+		runtimeRef.current = null;
+		setActiveSessionId(null);
+		services.sessionStore.setLastActiveSessionId(null);
 		setShowWelcomeScreen(true);
 		dispatch({ type: "sessionReset" });
 		syncRuntimeState();
-	}, [activateSession, buildSessionRuntime, services, syncRuntimeState]);
+	}, [services, syncRuntimeState]);
 
 	const openRenameDialog = useCallback(
-		(sessionId: string) => {
+		(sessionId: string, options?: { returnToSessionsDialog?: boolean }) => {
 			const summary = services.sessionStore
 				.listSessions(500)
 				.find((session) => session.id === sessionId);
@@ -686,6 +707,7 @@ export function useSessionController(
 			setSessionRenameDialogState({
 				sessionId,
 				value: summary.title,
+				returnToSessionsDialog: options?.returnToSessionsDialog,
 			});
 		},
 		[services],
@@ -1071,6 +1093,97 @@ export function useSessionController(
 				return;
 			}
 
+			if (text.startsWith("!")) {
+				const excludeFromContext = text.startsWith("!!");
+				const shellCommand = excludeFromContext
+					? text.slice(2).trim()
+					: text.slice(1).trim();
+				if (!shellCommand) {
+					return;
+				}
+
+				setShowWelcomeScreen(false);
+
+				const runtime = runtimeRef.current;
+				if (!runtime) {
+					setCommandNotice("No active session.");
+					return;
+				}
+
+				const sessionId = activeSessionIdRef.current;
+				const entry = sessionId ? sessionsRef.current.get(sessionId) : null;
+				if (!sessionId || !entry) {
+					setCommandNotice("No active session.");
+					return;
+				}
+
+				if (entry.composerShellAbort) {
+					setCommandNotice(
+						"A shell command is already running. Press Esc to cancel.",
+					);
+					return;
+				}
+
+				const ac = new AbortController();
+				entry.composerShellAbort = ac;
+
+				void (async () => {
+					try {
+						const result = await executeUserShellCommand(
+							runtime.cwd,
+							shellCommand,
+							ac.signal,
+						);
+						const bashMessage: BashExecutionMessage = {
+							role: "bashExecution",
+							command: shellCommand,
+							output: result.output,
+							exitCode: result.exitCode,
+							cancelled: result.cancelled,
+							truncated: result.truncated,
+							fullOutputPath: result.fullOutputPath,
+							timestamp: Date.now(),
+							excludeFromContext,
+						};
+
+						const currentRuntime = runtimeRef.current;
+						const currentEntry = sessionsRef.current.get(sessionId);
+						if (
+							!currentRuntime ||
+							!currentEntry ||
+							activeSessionIdRef.current !== sessionId
+						) {
+							return;
+						}
+
+						if (currentRuntime.agent.state.isStreaming) {
+							currentEntry.pendingBashMessages.push(bashMessage);
+						} else {
+							currentRuntime.agent.state.messages.push(bashMessage);
+							services.sessionStore.replaceSessionMessages(
+								sessionId,
+								currentRuntime.agent.state.messages,
+							);
+						}
+						setCommandNotice(null);
+					} catch (error: unknown) {
+						setCommandNotice(
+							error instanceof Error ? error.message : String(error),
+						);
+					} finally {
+						const currentEntry = sessionsRef.current.get(sessionId);
+						if (currentEntry) {
+							currentEntry.composerShellAbort = null;
+						}
+						if (activeSessionIdRef.current === sessionId) {
+							syncRuntimeState();
+						}
+					}
+				})();
+
+				return;
+			}
+
 			const runtime = ensureActiveRuntime(activeModelRef.current);
 			if (!runtime) {
 				setCommandNotice(
@@ -1139,6 +1252,15 @@ export function useSessionController(
 			}
 
 			if (key.name === "escape") {
+				const shellSessionId = activeSessionIdRef.current;
+				const shellEntry = shellSessionId
+					? sessionsRef.current.get(shellSessionId)
+					: null;
+				if (shellEntry?.composerShellAbort) {
+					shellEntry.composerShellAbort.abort();
+					return;
+				}
+
 				if (activePickerRef.current) {
 					setActivePicker(null);
 					setPendingDeleteSessionId(null);
@@ -1182,17 +1304,32 @@ export function useSessionController(
 		() =>
 			buildSessionSidebarUsageLines(
 				activeModel,
-				state.messages,
+				[...state.messages, ...state.pendingBashMessages],
 				state.streamingMessage,
 				activeModel ? services.modelRegistry.isUsingOAuth(activeModel) : false,
 			),
 		[
 			activeModel,
 			state.messages,
+			state.pendingBashMessages,
 			state.streamingMessage,
 			services.modelRegistry,
 		],
 	);
+
+	useEffect(() => {
+		let cancelled = false;
+		void buildSessionModifiedFiles(state.messages, services.workspaceRoot).then(
+			(rows) => {
+				if (!cancelled) {
+					setSessionSidebarModifiedFiles(rows);
+				}
+			},
+		);
+		return () => {
+			cancelled = true;
+		};
+	}, [state.messages, services.workspaceRoot]);
 
 	const currentSessionTitle =
 		(activeSessionId
@@ -1385,6 +1522,7 @@ export function useSessionController(
 	return {
 		state,
 		sessionSidebarUsage,
+		sessionSidebarModifiedFiles,
 		isNewSession: showWelcomeScreen,
 		hasSubmittedUserMessages,
 		isBrowsingHistory: state.historyIndex !== null,

@@ -5,6 +5,7 @@ import {
 	type AgentMessage,
 } from "../vendor/pi-agent-core/index.js";
 import { type Api, type Model, streamSimple } from "../vendor/pi-ai/index.js";
+import { convertSuperskyAgentMessagesToLlm } from "./bashExecutionTypes.js";
 import { buildSystemPrompt } from "./systemPrompt";
 import {
 	type BuiltInToolDefinitions,
@@ -23,6 +24,7 @@ export type AgentRuntimeOptions = {
 export interface AgentRuntimeLike {
 	readonly agent: Agent;
 	readonly sessionId: string;
+	readonly cwd: string;
 	readonly toolDefinitions: BuiltInToolDefinitions;
 	setModel(model: Model<Api>): void;
 	reset(): void;
@@ -63,6 +65,7 @@ export class SuperskyAgentRuntime implements AgentRuntimeLike {
 				thinkingLevel: options.model.reasoning ? "medium" : "off",
 				tools: tools.active,
 			},
+			convertToLlm: convertSuperskyAgentMessagesToLlm,
 			streamFn: async (model, context, streamOptions) => {
 				const apiKey = await this.options.authStorage.getApiKeyAsync(
 					model.provider,

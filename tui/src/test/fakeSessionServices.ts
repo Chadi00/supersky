@@ -1,3 +1,4 @@
+import { convertSuperskyAgentMessagesToLlm } from "../agent/bashExecutionTypes";
 import type { AgentRuntimeLike } from "../agent/runtime";
 import { buildSystemPrompt } from "../agent/systemPrompt";
 import { createBuiltInTools } from "../agent/tools";
@@ -53,6 +54,7 @@ function createModel(provider: string, id: string, name: string): Model<Api> {
 }
 
 class FakeAgentRuntime implements AgentRuntimeLike {
+	readonly cwd = process.cwd();
 	readonly toolDefinitions = createBuiltInTools(process.cwd()).definitions;
 	readonly agent: Agent;
 	readonly sessionId: string;
@@ -76,6 +78,7 @@ class FakeAgentRuntime implements AgentRuntimeLike {
 				thinkingLevel: model.reasoning ? "medium" : "off",
 				tools: tools.active,
 			},
+			convertToLlm: convertSuperskyAgentMessagesToLlm,
 			sessionId,
 			streamFn: async (runtimeModel, context) => {
 				const stream = createAssistantMessageEventStream();
