@@ -36,6 +36,8 @@ export type SessionState = {
 	historyDraft: string | null;
 };
 
+export type ComposerHistoryMessage = UserMessage | BashExecutionMessage;
+
 function userMessageText(message: UserMessage) {
 	if (typeof message.content === "string") {
 		return message.content;
@@ -52,8 +54,34 @@ export function getSubmittedUserMessages(messages: AgentMessage[]) {
 	);
 }
 
+export function getSubmittedComposerHistory(messages: AgentMessage[]) {
+	return messages
+		.map((message, index) => ({ message, index }))
+		.filter(
+			(entry): entry is { message: ComposerHistoryMessage; index: number } =>
+				entry.message.role === "user" ||
+				entry.message.role === "bashExecution",
+		)
+		.sort((left, right) => {
+			if (left.message.timestamp !== right.message.timestamp) {
+				return left.message.timestamp - right.message.timestamp;
+			}
+
+			return left.index - right.index;
+		})
+		.map((entry) => entry.message);
+}
+
 export function getUserMessageText(message: UserMessage) {
 	return userMessageText(message);
+}
+
+export function getComposerHistoryText(message: ComposerHistoryMessage) {
+	if (message.role === "user") {
+		return userMessageText(message);
+	}
+
+	return `${message.excludeFromContext ? "!!" : "!"}${message.command}`;
 }
 
 export function isToolResultMessage(

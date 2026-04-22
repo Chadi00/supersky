@@ -12,6 +12,7 @@ export type SessionModifiedFile = {
 	readonly path: string;
 	readonly additions: number;
 	readonly deletions: number;
+	readonly deleted: boolean;
 };
 
 /**
@@ -70,6 +71,7 @@ type SessionTrackedFile = {
 	path: string;
 	originalExists: boolean;
 	originalContent: string;
+	latestContent: string;
 };
 
 type SessionTrackedFiles = {
@@ -99,6 +101,33 @@ function buildFileStats(path: string, before: string, after: string) {
 			createPatch(path, before, after, "before", "after"),
 		),
 	};
+}
+
+function listGitDeletedPaths(workspaceRoot: string) {
+	const deletedPaths = new Set<string>();
+	for (const cmd of [
+		["git", "diff", "--name-only", "--diff-filter=D", "-z", "--"],
+		["git", "diff", "--cached", "--name-only", "--diff-filter=D", "-z", "--"],
+	] as const) {
+		const result = Bun.spawnSync({
+			cmd: [...cmd],
+			cwd: workspaceRoot,
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		if (result.exitCode !== 0) {
+			continue;
+		}
+
+		for (const path of Buffer.from(result.stdout)
+			.toString("utf8")
+			.split("\0")
+			.filter(Boolean)) {
+			deletedPaths.add(path);
+		}
+	}
+
+	return [...deletedPaths].toSorted((a, b) => a.localeCompare(b));
 }
 
 function collectSessionTrackedFiles(
@@ -135,6 +164,12 @@ function collectSessionTrackedFiles(
 						path,
 						originalExists: true,
 						originalContent: details.beforeContent as string,
+						latestContent: details.afterContent as string,
+					});
+				} else {
+					trackedByPath.set(path, {
+						...existing,
+						latestContent: details.afterContent as string,
 					});
 				}
 				continue;
@@ -162,6 +197,12 @@ function collectSessionTrackedFiles(
 							? details.beforeExisted
 							: true,
 					originalContent: details.beforeContent as string,
+					latestContent: details.afterContent as string,
+				});
+			} else {
+				trackedByPath.set(path, {
+					...existing,
+					latestContent: details.afterContent as string,
 				});
 			}
 			continue;
@@ -181,6 +222,7 @@ function collectSessionTrackedFiles(
 				path,
 				additions: stats.additions,
 				deletions: stats.deletions,
+				deleted: false,
 			}))
 			.toSorted((a, b) => a.path.localeCompare(b.path)),
 	};
@@ -211,19 +253,52 @@ export async function buildSessionModifiedFiles(
 				currentExists === file.originalExists &&
 				currentContent === file.originalContent
 			) {
+				if (
+					!currentExists &&
+					!file.originalExists &&
+					file.latestContent.length > 0
+				) {
+					return {
+						path: file.path,
+						...countUnifiedPatchStats(
+							createPatch(file.path, file.latestContent, "", "before", "after"),
+						),
+						deleted: true,
+					};
+				}
+
 				return null;
 			}
 
-			return buildFileStats(
-				file.path,
-				file.originalContent,
-				currentExists ? currentContent : "",
-			);
+			return {
+				...buildFileStats(
+					file.path,
+					file.originalContent,
+					currentExists ? currentContent : "",
+				),
+				deleted: !currentExists,
+			};
 		}),
 	);
-
-	return [
+	const rowsByPath = new Map<string, SessionModifiedFile>();
+	for (const row of [
 		...snapshotRows.filter((row) => row !== null),
 		...legacyRows,
-	].toSorted((a, b) => a.path.localeCompare(b.path));
+	]) {
+		rowsByPath.set(row.path, row);
+	}
+
+	for (const path of listGitDeletedPaths(workspaceRoot)) {
+		const existing = rowsByPath.get(path);
+		rowsByPath.set(path, {
+			path,
+			additions: existing?.additions ?? 0,
+			deletions: existing?.deletions ?? 0,
+			deleted: true,
+		});
+	}
+
+	return [...rowsByPath.values()].toSorted((a, b) =>
+		a.path.localeCompare(b.path),
+	);
 }

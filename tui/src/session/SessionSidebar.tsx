@@ -86,6 +86,13 @@ export function SessionSidebar({
 									</box>
 									<box flexShrink={0}>
 										<text>
+											{file.deleted ? (
+												<span fg={colors.diffDeleteText}>deleted</span>
+											) : null}
+											{file.deleted &&
+											(file.additions > 0 || file.deletions > 0) ? (
+												<span fg={colors.dimText}> </span>
+											) : null}
 											{file.additions > 0 ? (
 												<span fg={colors.successText}>+{file.additions}</span>
 											) : null}
@@ -97,7 +104,9 @@ export function SessionSidebar({
 													-{file.deletions}
 												</span>
 											) : null}
-											{file.additions === 0 && file.deletions === 0 ? (
+											{!file.deleted &&
+											file.additions === 0 &&
+											file.deletions === 0 ? (
 												<span fg={colors.dimText}>—</span>
 											) : null}
 										</text>

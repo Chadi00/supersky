@@ -57,7 +57,11 @@ import {
 	type SessionModifiedFile,
 } from "./sessionFileDiff";
 import { sessionReducer } from "./sessionReducer";
-import { createInitialSessionState, type ToolExecutionState } from "./types";
+import {
+	createInitialSessionState,
+	getSubmittedComposerHistory,
+	type ToolExecutionState,
+} from "./types";
 
 type ActivePickerState =
 	| { kind: "provider"; mode: "login" | "logout" }
@@ -1297,8 +1301,11 @@ export function useSessionController(
 	useKeyboard(handleKeyboardInput);
 
 	const hasSubmittedUserMessages =
-		state.pendingUserMessages.length > 0 ||
-		state.messages.some((message) => message.role === "user");
+		getSubmittedComposerHistory([
+			...state.messages,
+			...state.pendingBashMessages,
+			...state.pendingUserMessages,
+		]).length > 0;
 
 	const sessionSidebarUsage = useMemo(
 		() =>

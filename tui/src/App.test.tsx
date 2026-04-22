@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import type { AgentRuntimeLike } from "./agent/runtime";
+import * as userShell from "./agent/userShell";
 import * as clipboard from "./app/clipboard";
 import { getCommandPickerRowId } from "./session/commandPicker";
 import { SIDEBAR_LAYOUT_WIDTH } from "./session/layout";
@@ -1197,6 +1198,45 @@ test("down arrow restores the unsent draft after leaving history", async () => {
 		await pressDown(setup);
 		expect(getComposerText(setup)).toBe("draft in progress");
 	});
+});
+
+test("up and down include submitted shell commands in composer history", async () => {
+	const executeUserShellCommandSpy = spyOn(
+		userShell,
+		"executeUserShellCommand",
+	).mockResolvedValue({
+		output: "shell output",
+		exitCode: 0,
+		cancelled: false,
+		truncated: false,
+	});
+
+	try {
+		await withApp(async (setup) => {
+			await submitText(setup, "first prompt");
+			await submitText(setup, "!pwd");
+			await settleScrollLayout(setup);
+			await submitText(setup, "!!git status");
+			await settleScrollLayout(setup);
+
+			await pressUp(setup);
+			expect(getComposerText(setup)).toBe("!!git status");
+
+			await pressUp(setup);
+			expect(getComposerText(setup)).toBe("!!git status");
+
+			await pressUp(setup);
+			expect(getComposerText(setup)).toBe("!pwd");
+
+			await pressDown(setup);
+			expect(getComposerText(setup)).toBe("!!git status");
+
+			await pressDown(setup);
+			expect(getComposerText(setup)).toBe("");
+		});
+	} finally {
+		executeUserShellCommandSpy.mockRestore();
+	}
 });
 
 test("up arrow moves to the previous line before recalling history", async () => {

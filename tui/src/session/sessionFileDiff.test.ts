@@ -63,11 +63,13 @@ test("buildSessionModifiedFiles returns the current net diff for a modified file
 	await writeFile(filePath, "base\none\ntwo\n", "utf8");
 	await expect(
 		buildSessionModifiedFiles(messages, workspaceRoot),
-	).resolves.toEqual([{ path: "a.ts", additions: 2, deletions: 0 }]);
+	).resolves.toEqual([
+		{ path: "a.ts", additions: 2, deletions: 0, deleted: false },
+	]);
 	await rm(workspaceRoot, { recursive: true, force: true });
 });
 
-test("buildSessionModifiedFiles hides a new file that was later removed", async () => {
+test("buildSessionModifiedFiles keeps a new file that was later removed", async () => {
 	const workspaceRoot = await mkdtemp(
 		join(tmpdir(), "supersky-session-file-diff-"),
 	);
@@ -95,7 +97,97 @@ test("buildSessionModifiedFiles hides a new file that was later removed", async 
 	await unlink(filePath);
 	await expect(
 		buildSessionModifiedFiles(messages, workspaceRoot),
-	).resolves.toEqual([]);
+	).resolves.toEqual([
+		{ path: "hello.md", additions: 0, deletions: 1, deleted: true },
+	]);
+	await rm(workspaceRoot, { recursive: true, force: true });
+});
+
+test("buildSessionModifiedFiles marks an existing file deleted", async () => {
+	const workspaceRoot = await mkdtemp(
+		join(tmpdir(), "supersky-session-file-diff-"),
+	);
+	const filePath = join(workspaceRoot, "gone.ts");
+	await writeFile(filePath, "base\none\n", "utf8");
+	const messages = [
+		{
+			role: "toolResult" as const,
+			toolCallId: "1",
+			toolName: "edit",
+			content: [],
+			isError: false,
+			timestamp: 1,
+			details: {
+				absolutePath: filePath,
+				beforeContent: "base\none\n",
+				afterContent: "base\none\ntwo\n",
+				diff: createPatch(
+					"gone.ts",
+					"base\none\n",
+					"base\none\ntwo\n",
+					"x",
+					"y",
+				),
+				editCount: 1,
+			},
+		},
+	] satisfies AgentMessage[];
+
+	await unlink(filePath);
+	await expect(
+		buildSessionModifiedFiles(messages, workspaceRoot),
+	).resolves.toEqual([
+		{ path: "gone.ts", additions: 0, deletions: 2, deleted: true },
+	]);
+	await rm(workspaceRoot, { recursive: true, force: true });
+});
+
+test("buildSessionModifiedFiles includes git-tracked deleted files without tool results", async () => {
+	const workspaceRoot = await mkdtemp(
+		join(tmpdir(), "supersky-session-file-diff-"),
+	);
+	const filePath = join(workspaceRoot, "tracked.ts");
+
+	const initResult = Bun.spawnSync({
+		cmd: ["git", "init"],
+		cwd: workspaceRoot,
+		stdout: "pipe",
+		stderr: "pipe",
+	});
+	expect(initResult.exitCode).toBe(0);
+
+	await writeFile(filePath, "tracked\n", "utf8");
+
+	const addResult = Bun.spawnSync({
+		cmd: ["git", "add", "tracked.ts"],
+		cwd: workspaceRoot,
+		stdout: "pipe",
+		stderr: "pipe",
+	});
+	expect(addResult.exitCode).toBe(0);
+
+	const commitResult = Bun.spawnSync({
+		cmd: [
+			"git",
+			"-c",
+			"user.name=Supersky Test",
+			"-c",
+			"user.email=test@example.com",
+			"commit",
+			"-m",
+			"initial",
+		],
+		cwd: workspaceRoot,
+		stdout: "pipe",
+		stderr: "pipe",
+	});
+	expect(commitResult.exitCode).toBe(0);
+
+	await unlink(filePath);
+
+	await expect(buildSessionModifiedFiles([], workspaceRoot)).resolves.toEqual([
+		{ path: "tracked.ts", additions: 0, deletions: 0, deleted: true },
+	]);
 	await rm(workspaceRoot, { recursive: true, force: true });
 });
 

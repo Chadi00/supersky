@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 
+import type { BashExecutionMessage } from "../agent/bashExecutionTypes";
 import type { AgentMessage } from "../vendor/pi-agent-core/index.js";
 import type { AssistantMessage, UserMessage } from "../vendor/pi-ai/index.js";
 import { sessionReducer } from "./sessionReducer";
@@ -30,6 +31,23 @@ function createAssistantMessage(timestamp: number): AssistantMessage {
 		},
 		stopReason: "stop",
 		timestamp,
+	};
+}
+
+function createBashMessage(
+	command: string,
+	timestamp: number,
+	excludeFromContext = false,
+): BashExecutionMessage {
+	return {
+		role: "bashExecution",
+		command,
+		output: "",
+		exitCode: 0,
+		cancelled: false,
+		truncated: false,
+		timestamp,
+		excludeFromContext,
 	};
 }
 
@@ -139,6 +157,35 @@ test("moves forward through history before restoring the stashed draft", () => {
 	expect(nextState.draft).toBe("second prompt");
 	expect(nextState.historyIndex).toBe(1);
 	expect(nextState.historyDraft).toBe("draft in progress");
+});
+
+test("includes committed shell messages in composer history", () => {
+	const nextState = sessionReducer(
+		{
+			...createInitialSessionState(),
+			draft: "draft in progress",
+			messages: [
+				createUserMessage("first prompt", 1),
+				createBashMessage("pwd", 2),
+				createAssistantMessage(3),
+				createBashMessage("git status", 4, true),
+			],
+		},
+		{ type: "historyPrevious" },
+	);
+
+	expect(nextState.draft).toBe("!!git status");
+	expect(nextState.historyIndex).toBe(2);
+	expect(nextState.historyDraft).toBe("draft in progress");
+
+	const olderState = sessionReducer(nextState, { type: "historyPrevious" });
+	expect(olderState.draft).toBe("!pwd");
+	expect(olderState.historyIndex).toBe(1);
+
+	const restoredState = sessionReducer(nextState, { type: "historyNext" });
+	expect(restoredState.draft).toBe("draft in progress");
+	expect(restoredState.historyIndex).toBeNull();
+	expect(restoredState.historyDraft).toBeNull();
 });
 
 test("resets the session while bumping the composer reset token", () => {

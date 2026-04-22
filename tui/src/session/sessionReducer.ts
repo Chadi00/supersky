@@ -3,7 +3,8 @@ import type { AgentMessage } from "../vendor/pi-agent-core/index.js";
 import type { AssistantMessage, UserMessage } from "../vendor/pi-ai/index.js";
 import {
 	createInitialSessionState,
-	getSubmittedUserMessages,
+	getComposerHistoryText,
+	getSubmittedComposerHistory,
 	getUserMessageText,
 	type SessionState,
 	type ToolExecutionState,
@@ -54,23 +55,24 @@ export function sessionReducer(
 		}
 
 		case "historyPrevious": {
-			const userMessages = getSubmittedUserMessages([
+			const historyEntries = getSubmittedComposerHistory([
 				...state.messages,
+				...state.pendingBashMessages,
 				...state.pendingUserMessages,
 			]);
-			if (userMessages.length === 0) {
+			if (historyEntries.length === 0) {
 				return state;
 			}
 
 			const nextHistoryIndex =
 				state.historyIndex === null
-					? userMessages.length - 1
+					? historyEntries.length - 1
 					: Math.max(0, state.historyIndex - 1);
 			const nextHistoryDraft =
 				state.historyIndex === null ? state.draft : state.historyDraft;
-			const nextMessage = userMessages[nextHistoryIndex];
+			const nextMessage = historyEntries[nextHistoryIndex];
 			const nextDraft = nextMessage
-				? getUserMessageText(nextMessage)
+				? getComposerHistoryText(nextMessage)
 				: state.draft;
 
 			if (
@@ -94,15 +96,16 @@ export function sessionReducer(
 				return state;
 			}
 
-			const userMessages = getSubmittedUserMessages([
+			const historyEntries = getSubmittedComposerHistory([
 				...state.messages,
+				...state.pendingBashMessages,
 				...state.pendingUserMessages,
 			]);
-			if (userMessages.length === 0) {
+			if (historyEntries.length === 0) {
 				return state;
 			}
 
-			if (state.historyIndex >= userMessages.length - 1) {
+			if (state.historyIndex >= historyEntries.length - 1) {
 				return {
 					...state,
 					draft: state.historyDraft ?? "",
@@ -112,11 +115,11 @@ export function sessionReducer(
 			}
 
 			const nextHistoryIndex = state.historyIndex + 1;
-			const nextMessage = userMessages[nextHistoryIndex];
+			const nextMessage = historyEntries[nextHistoryIndex];
 
 			return {
 				...state,
-				draft: nextMessage ? getUserMessageText(nextMessage) : state.draft,
+				draft: nextMessage ? getComposerHistoryText(nextMessage) : state.draft,
 				historyIndex: nextHistoryIndex,
 			};
 		}
