@@ -149,6 +149,7 @@ function AppContent({ projectLine, services }: AppProps) {
 							<MessageList
 								messages={state.messages}
 								streamingMessage={state.streamingMessage}
+								isStreaming={state.isStreaming}
 								toolExecutions={state.toolExecutions}
 								toolDefinitions={toolDefinitions}
 								onMouseDown={focusComposer}

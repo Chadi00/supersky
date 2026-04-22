@@ -900,12 +900,17 @@ export function useSessionController(providedServices?: SessionServices) {
 				return;
 			}
 
-			void runtime.prompt(text).catch((error: unknown) => {
-				setCommandNotice(
-					error instanceof Error ? error.message : String(error),
-				);
-				syncRuntimeState();
-			});
+			void runtime
+				.prompt(text)
+				.then(() => {
+					syncRuntimeState();
+				})
+				.catch((error: unknown) => {
+					setCommandNotice(
+						error instanceof Error ? error.message : String(error),
+					);
+					syncRuntimeState();
+				});
 		},
 		[
 			ensureRuntime,

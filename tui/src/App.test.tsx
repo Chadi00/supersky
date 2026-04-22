@@ -102,7 +102,7 @@ test("submits the composer with enter", async () => {
 		const occurrences = frame.match(/send on enter/g)?.length ?? 0;
 		const timestampMatch = frame.match(/\b\d{1,2}:\d{2}:\d{2} (AM|PM)\b/);
 
-		expect(frame).toContain("Assistant");
+		expect(frame).toContain("Handled request.");
 		expect(frame).toContain("send on enter");
 		expect(occurrences).toBe(1);
 		expect(timestampMatch).not.toBeNull();
@@ -639,7 +639,6 @@ test("sending a multiline message does not add an extra blank line", async () =>
 
 		expect(lineTwoIndex).toBeGreaterThan(-1);
 		expect(lines[lineTwoIndex + 1]?.trim()).toMatch(timestampPattern);
-		expect(linesAfterMessage).toContain("Assistant");
 		expect(linesAfterMessage).toContain("Handled request.");
 	});
 });

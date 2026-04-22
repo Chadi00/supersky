@@ -5,7 +5,7 @@ import type { SuperskyToolDefinition } from "../agent/tools/types";
 import { colors } from "../shared/theme";
 import { formatMessageTimestamp } from "../shared/time";
 import type { ToolResultMessage } from "../vendor/pi-ai/index.js";
-import { AssistantMessage } from "./AssistantMessage";
+import { AssistantMessage, AssistantStreamingIndicator } from "./AssistantMessage";
 import {
 	getUserMessageText,
 	isToolResultMessage,
@@ -16,6 +16,7 @@ import {
 type MessageListProps = {
 	messages: SessionState["messages"];
 	streamingMessage: SessionState["streamingMessage"];
+	isStreaming: SessionState["isStreaming"];
 	toolExecutions: ToolExecutionState[];
 	toolDefinitions: Record<
 		string,
@@ -27,6 +28,7 @@ type MessageListProps = {
 export function MessageList({
 	messages,
 	streamingMessage,
+	isStreaming,
 	toolExecutions,
 	toolDefinitions,
 	onMouseDown,
@@ -136,6 +138,10 @@ export function MessageList({
 						toolDefinitions={toolDefinitions}
 						isStreaming
 					/>
+				) : isStreaming ? (
+					<box flexDirection="column" marginBottom={1}>
+						<AssistantStreamingIndicator />
+					</box>
 				) : null}
 			</box>
 		</scrollbox>

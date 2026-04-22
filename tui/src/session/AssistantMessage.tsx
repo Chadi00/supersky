@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+
 import type { SuperskyToolDefinition } from "../agent/tools/types";
 import { colors } from "../shared/theme";
 import type { AgentToolResult } from "../vendor/pi-agent-core/index.js";
@@ -41,6 +43,39 @@ function getPreviewText(text: string, maxLines = 10) {
 		return text;
 	}
 	return `${lines.slice(0, maxLines).join("\n")}\n... (${lines.length - maxLines} more lines)`;
+}
+
+/** Braille spinner frames, matching pi-mono `Loader` (80ms per frame). */
+const BRAILLE_SPINNER_FRAMES = [
+	"⠋",
+	"⠙",
+	"⠹",
+	"⠸",
+	"⠼",
+	"⠴",
+	"⠦",
+	"⠧",
+	"⠇",
+	"⠏",
+] as const;
+
+export function AssistantStreamingIndicator() {
+	const [frameIndex, setFrameIndex] = useState(0);
+
+	useEffect(() => {
+		const id = setInterval(() => {
+			setFrameIndex((i) => (i + 1) % BRAILLE_SPINNER_FRAMES.length);
+		}, 80);
+		return () => clearInterval(id);
+	}, []);
+
+	const frame = BRAILLE_SPINNER_FRAMES[frameIndex];
+	return (
+		<text>
+			<span fg={colors.accentText}>{frame}</span>
+			<span fg={colors.dimText}> Working...</span>
+		</text>
+	);
 }
 
 function ToolExecutionRow(props: {
@@ -104,10 +139,7 @@ export function AssistantMessage(props: {
 }) {
 	return (
 		<box flexDirection="column" marginBottom={1}>
-			<text fg={colors.assistantLabel}>
-				Assistant · {props.message.provider}/{props.message.model}
-				{props.isStreaming ? " · streaming" : ""}
-			</text>
+			{props.isStreaming ? <AssistantStreamingIndicator /> : null}
 
 			<box flexDirection="column" paddingLeft={1}>
 				{props.message.content.map((content) => {
