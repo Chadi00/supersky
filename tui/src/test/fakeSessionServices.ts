@@ -21,8 +21,8 @@ import type {
 	StoredSession,
 } from "../session/providerState/sessionStore";
 import type { SettingsManagerLike } from "../session/providerState/settingsManager";
-import { Agent } from "../vendor/pi-agent-core/index.js";
 import type { AgentMessage } from "../vendor/pi-agent-core/index.js";
+import { Agent } from "../vendor/pi-agent-core/index.js";
 import { createAssistantMessageEventStream } from "../vendor/pi-ai/index.js";
 
 type FakeProviderSpec = {
@@ -57,7 +57,11 @@ class FakeAgentRuntime implements AgentRuntimeLike {
 	readonly agent: Agent;
 	readonly sessionId: string;
 
-	constructor(model: Model<Api>, sessionId: string) {
+	constructor(
+		model: Model<Api>,
+		sessionId: string,
+		initialMessages: AgentMessage[] = [],
+	) {
 		this.sessionId = sessionId;
 		const tools = createBuiltInTools(process.cwd());
 		this.agent = new Agent({
@@ -68,6 +72,7 @@ class FakeAgentRuntime implements AgentRuntimeLike {
 					tools: Object.values(tools.definitions),
 				}),
 				model,
+				messages: initialMessages,
 				thinkingLevel: model.reasoning ? "medium" : "off",
 				tools: tools.active,
 			},
@@ -132,8 +137,12 @@ class FakeAgentRuntime implements AgentRuntimeLike {
 		this.agent.reset();
 	}
 
-	prompt(text: string) {
-		return this.agent.prompt(text);
+	prompt(input: string | AgentMessage | AgentMessage[]) {
+		if (typeof input === "string") {
+			return this.agent.prompt(input);
+		}
+
+		return this.agent.prompt(input);
 	}
 
 	abort() {
@@ -456,14 +465,15 @@ export function createFakeSessionServices(options?: {
 		modelRegistry,
 		sessionStore,
 		workspaceRoot: process.cwd(),
-		createRuntime: (model) => {
+		createRuntime: (model, options) => {
 			const fallbackModel = fakeModels[0];
 			if (!fallbackModel) {
 				return null;
 			}
 			return new FakeAgentRuntime(
 				model ?? fallbackModel,
-				`fake-session-${Date.now()}`,
+				options?.sessionId ?? `fake-session-${Date.now()}`,
+				options?.initialMessages,
 			);
 		},
 		paths: {

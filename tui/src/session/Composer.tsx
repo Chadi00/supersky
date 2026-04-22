@@ -15,8 +15,8 @@ import {
 
 import { colors } from "../shared/theme";
 import {
-	type CommandPickerState,
 	getCommandPickerRowId,
+	type InlineCommandPickerState,
 } from "./commandPicker";
 import {
 	composerKeyBindings,
@@ -165,7 +165,7 @@ function SlashCommandMenu({
 }
 
 type CommandPickerMenuProps = {
-	picker: CommandPickerState;
+	picker: InlineCommandPickerState;
 	selectedIndex: number;
 	onSelect: (index: number) => void;
 	onExecute: (itemId: string) => void;
@@ -303,6 +303,23 @@ function CommandPickerMenu({
 						)}
 					</box>
 				</scrollbox>
+				{picker.footerActions && picker.footerActions.length > 0 ? (
+					<box
+						flexDirection="row"
+						paddingLeft={1}
+						paddingRight={1}
+						paddingTop={1}
+						paddingBottom={1}
+						gap={2}
+					>
+						{picker.footerActions.map((action) => (
+							<box key={action.label} flexDirection="row" gap={1}>
+								<text fg={colors.foregroundText}>{action.label}</text>
+								<text fg={colors.dimText}>{action.shortcut}</text>
+							</box>
+						))}
+					</box>
+				) : null}
 			</box>
 		</box>
 	);
@@ -320,7 +337,7 @@ type ComposerProps = {
 	isBrowsingHistory: boolean;
 	onHistoryPrevious: () => void;
 	onHistoryNext: () => void;
-	commandPickerState: CommandPickerState | null;
+	commandPickerState: InlineCommandPickerState | null;
 	onCommandPickerClose: () => void;
 	onCommandPickerSelect: (itemId: string) => void;
 	focused: boolean;
@@ -376,6 +393,20 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
 			() => getMatchingSlashCommands(slashMenuQuery ?? ""),
 			[slashMenuQuery],
 		);
+		const commandPickerItemIds = useMemo(
+			() => commandPickerState?.items.map((item) => item.id) ?? [],
+			[commandPickerState?.items],
+		);
+		const defaultCommandPickerIndex = useMemo(() => {
+			if (!commandPickerState?.selectedItemId) {
+				return 0;
+			}
+
+			const nextSelectedIndex = commandPickerItemIds.indexOf(
+				commandPickerState.selectedItemId,
+			);
+			return nextSelectedIndex >= 0 ? nextSelectedIndex : 0;
+		}, [commandPickerItemIds, commandPickerState?.selectedItemId]);
 		const selectedSlashCommand =
 			matchingSlashCommands[selectedSlashCommandIndex] ??
 			matchingSlashCommands[0];
@@ -476,24 +507,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
 		}, [isComposerMenuOpen, onComposerMenuOpenChange]);
 
 		useEffect(() => {
-			if (!commandPickerState) {
-				setSelectedCommandPickerIndex(0);
-				return;
-			}
-
-			const nextSelectedIndex = commandPickerState.selectedItemId
-				? commandPickerState.items.findIndex(
-						(item) => item.id === commandPickerState.selectedItemId,
-					)
-				: -1;
-			setSelectedCommandPickerIndex(
-				nextSelectedIndex >= 0 ? nextSelectedIndex : 0,
-			);
-		}, [
-			commandPickerState?.kind,
-			commandPickerState?.selectedItemId,
-			commandPickerState?.items.map((item) => item.id).join("\u0000"),
-		]);
+			setSelectedCommandPickerIndex(defaultCommandPickerIndex);
+		}, [defaultCommandPickerIndex]);
 
 		// When the session dismisses a composer menu (e.g. Escape), the token increments.
 		// React only to token changes. Do not list `commandPickerState` here: with a

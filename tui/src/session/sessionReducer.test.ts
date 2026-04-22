@@ -34,6 +34,7 @@ function createAssistantMessage(timestamp: number): AssistantMessage {
 }
 
 test("clears the draft and browsing state when a prompt is submitted", () => {
+	const submittedMessage = createUserMessage("send on enter", 10);
 	const nextState = sessionReducer(
 		{
 			...createInitialSessionState(),
@@ -41,13 +42,38 @@ test("clears the draft and browsing state when a prompt is submitted", () => {
 			historyIndex: 0,
 			historyDraft: "older draft",
 		},
-		{ type: "promptSubmitted" },
+		{ type: "promptSubmitted", message: submittedMessage },
 	);
 
 	expect(nextState.draft).toBe("");
+	expect(nextState.pendingUserMessages).toEqual([submittedMessage]);
+	expect(nextState.isStreaming).toBe(true);
 	expect(nextState.historyIndex).toBeNull();
 	expect(nextState.historyDraft).toBeNull();
 	expect(nextState.composerResetToken).toBe(1);
+});
+
+test("clears pending user messages once the runtime transcript contains them", () => {
+	const submittedMessage = createUserMessage("hello", 1);
+	const assistantMessage = createAssistantMessage(2);
+	const nextState = sessionReducer(
+		{
+			...createInitialSessionState(),
+			pendingUserMessages: [submittedMessage],
+			isStreaming: true,
+		},
+		{
+			type: "runtimeStateReplaced",
+			messages: [submittedMessage, assistantMessage],
+			streamingMessage: null,
+			toolExecutions: [],
+			isStreaming: false,
+			errorMessage: null,
+		},
+	);
+
+	expect(nextState.pendingUserMessages).toEqual([]);
+	expect(nextState.messages).toEqual([submittedMessage, assistantMessage]);
 });
 
 test("replaces runtime-managed transcript state from the agent snapshot", () => {
@@ -121,6 +147,7 @@ test("resets the session while bumping the composer reset token", () => {
 			historyIndex: 0,
 			historyDraft: "work in progress",
 			messages: [createUserMessage("hello", 1)],
+			pendingUserMessages: [],
 			streamingMessage: createAssistantMessage(2),
 			toolExecutions: [
 				{

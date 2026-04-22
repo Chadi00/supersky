@@ -5,7 +5,10 @@ import type { SuperskyToolDefinition } from "../agent/tools/types";
 import { colors } from "../shared/theme";
 import { formatMessageTimestamp } from "../shared/time";
 import type { ToolResultMessage } from "../vendor/pi-ai/index.js";
-import { AssistantMessage, AssistantStreamingIndicator } from "./AssistantMessage";
+import {
+	AssistantMessage,
+	AssistantStreamingIndicator,
+} from "./AssistantMessage";
 import {
 	getUserMessageText,
 	isToolResultMessage,
@@ -15,6 +18,7 @@ import {
 
 type MessageListProps = {
 	messages: SessionState["messages"];
+	pendingUserMessages: SessionState["pendingUserMessages"];
 	streamingMessage: SessionState["streamingMessage"];
 	isStreaming: SessionState["isStreaming"];
 	toolExecutions: ToolExecutionState[];
@@ -27,6 +31,7 @@ type MessageListProps = {
 
 export function MessageList({
 	messages,
+	pendingUserMessages,
 	streamingMessage,
 	isStreaming,
 	toolExecutions,
@@ -74,6 +79,30 @@ export function MessageList({
 		return count === 0 ? baseKey : `${baseKey}-${count + 1}`;
 	};
 
+	const renderUserMessage = (
+		message: Extract<SessionState["messages"][number], { role: "user" }>,
+		keyPrefix: string,
+	) => (
+		<box
+			key={`${keyPrefix}-${message.timestamp}-${getUserMessageText(message).slice(0, 24)}`}
+			flexDirection="column"
+			marginBottom={1}
+		>
+			<box
+				backgroundColor={colors.userMessageBackground}
+				paddingX={1}
+				paddingY={1}
+				flexDirection="column"
+				gap={0}
+			>
+				<text fg={colors.foregroundText}>{getUserMessageText(message)}</text>
+				<text fg={colors.dimText}>
+					{formatMessageTimestamp(new Date(message.timestamp))}
+				</text>
+			</box>
+		</box>
+	);
+
 	return (
 		// biome-ignore lint/a11y/noStaticElementInteractions: Message list clicks refocus the composer textarea.
 		<scrollbox
@@ -99,26 +128,7 @@ export function MessageList({
 			<box flexDirection="column" padding={1} gap={0}>
 				{messages.map((message) =>
 					message.role === "user" ? (
-						<box
-							key={`user-${message.timestamp}-${getUserMessageText(message).slice(0, 24)}`}
-							flexDirection="column"
-							marginBottom={1}
-						>
-							<box
-								backgroundColor={colors.userMessageBackground}
-								paddingX={1}
-								paddingY={1}
-								flexDirection="column"
-								gap={0}
-							>
-								<text fg={colors.foregroundText}>
-									{getUserMessageText(message)}
-								</text>
-								<text fg={colors.dimText}>
-									{formatMessageTimestamp(new Date(message.timestamp))}
-								</text>
-							</box>
-						</box>
+						renderUserMessage(message, "user")
 					) : message.role === "assistant" ? (
 						<AssistantMessage
 							key={getAssistantKey(message)}
@@ -128,6 +138,9 @@ export function MessageList({
 							toolDefinitions={toolDefinitions}
 						/>
 					) : null,
+				)}
+				{pendingUserMessages.map((message) =>
+					renderUserMessage(message, "pending-user"),
 				)}
 				{streamingMessage ? (
 					<AssistantMessage

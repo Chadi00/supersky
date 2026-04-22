@@ -1,5 +1,5 @@
 import type { AgentMessage } from "../vendor/pi-agent-core/index.js";
-import type { AssistantMessage } from "../vendor/pi-ai/index.js";
+import type { AssistantMessage, UserMessage } from "../vendor/pi-ai/index.js";
 import {
 	createInitialSessionState,
 	getSubmittedUserMessages,
@@ -12,7 +12,7 @@ export type SessionAction =
 	| { type: "draftChanged"; value: string }
 	| { type: "historyPrevious" }
 	| { type: "historyNext" }
-	| { type: "promptSubmitted" }
+	| { type: "promptSubmitted"; message: UserMessage }
 	| {
 			type: "runtimeStateReplaced";
 			messages: AgentMessage[];
@@ -22,6 +22,18 @@ export type SessionAction =
 			errorMessage: string | null;
 	  }
 	| { type: "sessionReset" };
+
+function hasMatchingUserMessage(
+	messages: AgentMessage[],
+	candidate: UserMessage,
+) {
+	return messages.some(
+		(message) =>
+			message.role === "user" &&
+			message.timestamp === candidate.timestamp &&
+			getUserMessageText(message) === getUserMessageText(candidate),
+	);
+}
 
 export function sessionReducer(
 	state: SessionState,
@@ -40,7 +52,10 @@ export function sessionReducer(
 		}
 
 		case "historyPrevious": {
-			const userMessages = getSubmittedUserMessages(state.messages);
+			const userMessages = getSubmittedUserMessages([
+				...state.messages,
+				...state.pendingUserMessages,
+			]);
 			if (userMessages.length === 0) {
 				return state;
 			}
@@ -77,7 +92,10 @@ export function sessionReducer(
 				return state;
 			}
 
-			const userMessages = getSubmittedUserMessages(state.messages);
+			const userMessages = getSubmittedUserMessages([
+				...state.messages,
+				...state.pendingUserMessages,
+			]);
 			if (userMessages.length === 0) {
 				return state;
 			}
@@ -105,6 +123,10 @@ export function sessionReducer(
 			return {
 				...state,
 				draft: "",
+				pendingUserMessages: [...state.pendingUserMessages, action.message],
+				streamingMessage: null,
+				isStreaming: true,
+				errorMessage: null,
 				composerResetToken: state.composerResetToken + 1,
 				historyIndex: null,
 				historyDraft: null,
@@ -112,9 +134,14 @@ export function sessionReducer(
 		}
 
 		case "runtimeStateReplaced": {
+			const pendingUserMessages = state.pendingUserMessages.filter(
+				(message) => !hasMatchingUserMessage(action.messages, message),
+			);
+
 			return {
 				...state,
 				messages: action.messages,
+				pendingUserMessages,
 				streamingMessage: action.streamingMessage,
 				toolExecutions: action.toolExecutions,
 				isStreaming: action.isStreaming,

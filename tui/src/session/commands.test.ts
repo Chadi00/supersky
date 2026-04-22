@@ -1,7 +1,6 @@
 import { expect, test } from "bun:test";
 
 import {
-	DELETE_COMMAND,
 	EXIT_COMMAND,
 	getMatchingSlashCommands,
 	getSlashMenuQuery,
@@ -26,8 +25,8 @@ test("matches the exit command case-insensitively", () => {
 	expect(isExitCommand("quit")).toBe(false);
 });
 
-test("matches escape and ctrl+c as exit shortcuts", () => {
-	expect(isExitShortcut({ name: "escape", ctrl: false })).toBe(true);
+test("matches ctrl+c as the exit shortcut", () => {
+	expect(isExitShortcut({ name: "escape", ctrl: false })).toBe(false);
 	expect(isExitShortcut({ name: "c", ctrl: true })).toBe(true);
 	expect(isExitShortcut({ name: "c", ctrl: false })).toBe(false);
 });
@@ -46,9 +45,7 @@ test("opens the slash menu only while the cursor is inside the leading token", (
 
 test("matches slash commands by prefix before description text", () => {
 	expect(getMatchingSlashCommands("m")[0]?.name).toBe(MODEL_COMMAND);
-	expect(getMatchingSlashCommands("session")[0]?.name).toBe(
-		SESSIONS_COMMAND,
-	);
+	expect(getMatchingSlashCommands("session")[0]?.name).toBe(SESSIONS_COMMAND);
 });
 
 test("supports session aliases and management commands", () => {
@@ -58,9 +55,7 @@ test("supports session aliases and management commands", () => {
 	expect(parseSubmittedSlashCommand("/rename now")?.command.name).toBe(
 		RENAME_COMMAND,
 	);
-	expect(parseSubmittedSlashCommand("/delete")?.command.name).toBe(
-		DELETE_COMMAND,
-	);
+	expect(parseSubmittedSlashCommand("/delete")).toBeNull();
 });
 
 test("parses a submitted slash command from the first token", () => {

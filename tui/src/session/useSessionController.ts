@@ -1,15 +1,15 @@
 import { useKeyboard, useRenderer } from "@opentui/react";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { type AgentRuntimeLike, SuperskyAgentRuntime } from "../agent/runtime";
-import { BRAILLE_SPINNER_FRAMES } from "../shared/brailleSpinner";
+import { copyToClipboard } from "../app/clipboard";
 import { destroyRendererAndExit } from "../shared/lifecycle";
 import type {
 	AgentEvent,
 	AgentMessage,
 } from "../vendor/pi-agent-core/index.js";
+import type { UserMessage } from "../vendor/pi-ai/index.js";
 import type { CommandPickerState } from "./commandPicker";
 import {
-	DELETE_COMMAND,
 	EXIT_COMMAND,
 	isExitCommand,
 	isExitShortcut,
@@ -24,7 +24,6 @@ import {
 	SETTINGS_COMMAND,
 } from "./commands";
 import type { LoginDialogLineTone, LoginDialogState } from "./LoginDialog";
-import type { SessionRenameDialogState } from "./SessionRenameDialog";
 import { openUrlInBrowser } from "./providerState/browser";
 import {
 	defaultModelPerProvider,
@@ -42,6 +41,7 @@ import {
 	createSessionServices,
 	type SessionServices,
 } from "./providerState/services";
+import type { SessionRenameDialogState } from "./SessionRenameDialog";
 import { sessionReducer } from "./sessionReducer";
 import { createInitialSessionState, type ToolExecutionState } from "./types";
 
@@ -156,14 +156,6 @@ function getAvailableProviderCount(services: SessionServices) {
 	).size;
 }
 
-function formatRelativeTime(timestamp: number) {
-	const delta = Date.now() - timestamp;
-	if (delta < 60_000) return "just now";
-	if (delta < 3_600_000) return `${Math.floor(delta / 60_000)}m ago`;
-	if (delta < 86_400_000) return `${Math.floor(delta / 3_600_000)}h ago`;
-	return `${Math.floor(delta / 86_400_000)}d ago`;
-}
-
 function createRuntimeSnapshot(
 	runtime: AgentRuntimeLike,
 	toolExecutions: Map<string, ToolExecutionState>,
@@ -181,7 +173,10 @@ function createRuntimeSnapshot(
 	};
 }
 
-export function useSessionController(providedServices?: SessionServices) {
+export function useSessionController(
+	providedServices?: SessionServices,
+	initialSessionId: string | null = null,
+) {
 	const renderer = useRenderer();
 	const servicesRef = useRef<SessionServices | null>(null);
 	if (servicesRef.current === null) {
@@ -194,13 +189,14 @@ export function useSessionController(providedServices?: SessionServices) {
 	const pendingLoginInputRef = useRef<PendingLoginInput | null>(null);
 	const loginAbortControllerRef = useRef<AbortController | null>(null);
 	const loginLineIdRef = useRef(0);
+	const sessionRenameValueRef = useRef("");
 	const [commandNotice, setCommandNotice] = useState<string | null>(null);
 	const [dismissComposerMenuToken, setDismissComposerMenuToken] = useState(0);
 	const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+	const [showWelcomeScreen, setShowWelcomeScreen] = useState(true);
 	const [activePicker, setActivePicker] = useState<ActivePickerState | null>(
 		null,
 	);
-	const [sessionPickerFrameIndex, setSessionPickerFrameIndex] = useState(0);
 	const [pendingDeleteSessionId, setPendingDeleteSessionId] = useState<
 		string | null
 	>(null);
@@ -251,7 +247,10 @@ export function useSessionController(providedServices?: SessionServices) {
 		}
 		dispatch({
 			type: "runtimeStateReplaced",
-			...createRuntimeSnapshot(runtime, activeEntry?.toolExecutions ?? new Map()),
+			...createRuntimeSnapshot(
+				runtime,
+				activeEntry?.toolExecutions ?? new Map(),
+			),
 		});
 	}, []);
 
@@ -262,7 +261,10 @@ export function useSessionController(providedServices?: SessionServices) {
 			initialMessages?: AgentMessage[],
 		) => {
 			const runtime =
-				services.createRuntime?.(model) ??
+				services.createRuntime?.(model, {
+					sessionId,
+					initialMessages,
+				}) ??
 				(model
 					? new SuperskyAgentRuntime({
 							authStorage: services.authStorage,
@@ -344,6 +346,7 @@ export function useSessionController(providedServices?: SessionServices) {
 			if (!entry) return null;
 			runtimeRef.current = entry.runtime;
 			setActiveSessionId(sessionId);
+			setShowWelcomeScreen(false);
 			services.sessionStore.setLastActiveSessionId(sessionId);
 			syncRuntimeState();
 			return entry.runtime;
@@ -393,11 +396,16 @@ export function useSessionController(providedServices?: SessionServices) {
 
 	useEffect(() => {
 		const fallbackModel = activeModelRef.current;
-		const summaries = services.sessionStore.listSessions(200);
-		const lastActiveId = services.sessionStore.getLastActiveSessionId();
-		const target = summaries.find((session) => session.id === lastActiveId)
-			?? summaries[0];
-		if (target) {
+		if (initialSessionId) {
+			const target = services.sessionStore
+				.listSessions(200)
+				.find((session) => session.id === initialSessionId);
+			if (!target) {
+				setCommandNotice(`Session not found: ${initialSessionId}`);
+				syncRuntimeState();
+				return;
+			}
+
 			const stored = services.sessionStore.getSession(target.id);
 			const storedModel =
 				target.modelProvider && target.modelId
@@ -416,22 +424,12 @@ export function useSessionController(providedServices?: SessionServices) {
 			activateSession(target.id);
 			return;
 		}
-		const newSessionId = crypto.randomUUID();
-		services.sessionStore.createSession({
-			id: newSessionId,
-			title: "New session",
-			workspaceRoot: services.workspaceRoot,
-			model: fallbackModel ?? null,
-		});
-		const entry = buildSessionRuntime(newSessionId, fallbackModel ?? null);
-		if (!entry) {
-			syncRuntimeState();
-			return;
-		}
-		activateSession(newSessionId);
+
+		syncRuntimeState();
 	}, [
 		activateSession,
 		buildSessionRuntime,
+		initialSessionId,
 		services,
 		syncRuntimeState,
 	]);
@@ -526,6 +524,7 @@ export function useSessionController(providedServices?: SessionServices) {
 	}, [setLoginInputState]);
 
 	const setSessionRenameValue = useCallback((value: string) => {
+		sessionRenameValueRef.current = value;
 		setSessionRenameDialogState((current) =>
 			current
 				? {
@@ -537,20 +536,38 @@ export function useSessionController(providedServices?: SessionServices) {
 	}, []);
 
 	const cancelSessionRename = useCallback(() => {
+		sessionRenameValueRef.current = "";
 		setSessionRenameDialogState(null);
 	}, []);
+
+	const copySessionId = useCallback(async (sessionId: string) => {
+		await copyToClipboard(sessionId);
+		setCommandNotice("Session ID copied to clipboard.");
+	}, []);
+
+	const copySessionIdFromPicker = useCallback(
+		(sessionId: string) => {
+			void copySessionId(sessionId).catch((error: unknown) => {
+				setCommandNotice(
+					error instanceof Error ? error.message : String(error),
+				);
+			});
+		},
+		[copySessionId],
+	);
 
 	const submitSessionRename = useCallback(() => {
 		const dialog = sessionRenameDialogState;
 		if (!dialog) {
 			return;
 		}
-		const nextTitle = dialog.value.trim() || "New session";
+		const nextTitle = sessionRenameValueRef.current.trim() || "New session";
 		services.sessionStore.updateSessionTitle(dialog.sessionId, nextTitle);
 		const entry = sessionsRef.current.get(dialog.sessionId);
 		if (entry) {
 			entry.title = nextTitle;
 		}
+		sessionRenameValueRef.current = "";
 		setSessionRenameDialogState(null);
 		setCommandNotice("Session renamed.");
 	}, [services, sessionRenameDialogState]);
@@ -595,61 +612,86 @@ export function useSessionController(providedServices?: SessionServices) {
 			return;
 		}
 		activateSession(sessionId);
+		setShowWelcomeScreen(true);
 		dispatch({ type: "sessionReset" });
 		syncRuntimeState();
 	}, [activateSession, buildSessionRuntime, services, syncRuntimeState]);
 
-	const openRenameDialog = useCallback((sessionId: string) => {
-		const summary = services.sessionStore
-			.listSessions(500)
-			.find((session) => session.id === sessionId);
-		if (!summary) {
-			return;
-		}
-		setSessionRenameDialogState({
-			sessionId,
-			value: summary.title,
-		});
-	}, [services]);
-
-	const confirmDeleteSession = useCallback((sessionId: string) => {
-		const activeId = activeSessionIdRef.current;
-		const entry = sessionsRef.current.get(sessionId);
-		entry?.runtime.abort();
-		entry?.unsubscribe();
-		sessionsRef.current.delete(sessionId);
-		services.sessionStore.deleteSession(sessionId);
-		setPendingDeleteSessionId(null);
-		if (activeId === sessionId) {
-			const fallback = services.sessionStore.listSessions(1)[0];
-			if (fallback) {
-				const stored = services.sessionStore.getSession(fallback.id);
-				const model =
-					(fallback.modelProvider && fallback.modelId
-						? services.modelRegistry.find(
-								fallback.modelProvider,
-								fallback.modelId,
-							)
-						: null) ?? activeModelRef.current;
-				if (model) {
-					const runtimeEntry =
-						sessionsRef.current.get(fallback.id) ??
-						buildSessionRuntime(fallback.id, model, stored?.messages);
-					if (!runtimeEntry) {
-						return;
-					}
-					runtimeEntry.title = fallback.title;
-					activateSession(fallback.id);
-				}
-			} else {
-				runtimeRef.current = null;
-				setActiveSessionId(null);
-				dispatch({ type: "sessionReset" });
-				syncRuntimeState();
+	const openRenameDialog = useCallback(
+		(sessionId: string) => {
+			const summary = services.sessionStore
+				.listSessions(500)
+				.find((session) => session.id === sessionId);
+			if (!summary) {
+				return;
 			}
-		}
-		setCommandNotice("Session deleted.");
-	}, [activateSession, buildSessionRuntime, services, syncRuntimeState]);
+			sessionRenameValueRef.current = summary.title;
+			setSessionRenameDialogState({
+				sessionId,
+				value: summary.title,
+			});
+		},
+		[services],
+	);
+
+	const confirmDeleteSession = useCallback(
+		(sessionId: string) => {
+			const activeId = activeSessionIdRef.current;
+			const entry = sessionsRef.current.get(sessionId);
+			entry?.runtime.abort();
+			entry?.unsubscribe();
+			sessionsRef.current.delete(sessionId);
+			services.sessionStore.deleteSession(sessionId);
+			setPendingDeleteSessionId(null);
+			if (activeId === sessionId) {
+				const fallback = services.sessionStore.listSessions(1)[0];
+				if (fallback) {
+					const stored = services.sessionStore.getSession(fallback.id);
+					const model =
+						(fallback.modelProvider && fallback.modelId
+							? services.modelRegistry.find(
+									fallback.modelProvider,
+									fallback.modelId,
+								)
+							: null) ?? activeModelRef.current;
+					if (model) {
+						const runtimeEntry =
+							sessionsRef.current.get(fallback.id) ??
+							buildSessionRuntime(fallback.id, model, stored?.messages);
+						if (!runtimeEntry) {
+							return;
+						}
+						runtimeEntry.title = fallback.title;
+						activateSession(fallback.id);
+					}
+				} else {
+					runtimeRef.current = null;
+					setActiveSessionId(null);
+					setShowWelcomeScreen(true);
+					dispatch({ type: "sessionReset" });
+					syncRuntimeState();
+				}
+			}
+			setCommandNotice("Session deleted.");
+		},
+		[activateSession, buildSessionRuntime, services, syncRuntimeState],
+	);
+
+	const clearPendingSessionDelete = useCallback(() => {
+		setPendingDeleteSessionId(null);
+	}, []);
+
+	const toggleSessionDelete = useCallback(
+		(sessionId: string) => {
+			if (pendingDeleteSessionId === sessionId) {
+				confirmDeleteSession(sessionId);
+				return;
+			}
+
+			setPendingDeleteSessionId(sessionId);
+		},
+		[confirmDeleteSession, pendingDeleteSessionId],
+	);
 
 	const beginLoginFlow = useCallback(
 		async (providerId: string) => {
@@ -955,21 +997,6 @@ export function useSessionController(providedServices?: SessionServices) {
 					return;
 				}
 
-				if (slashCommand.command.name === DELETE_COMMAND) {
-					const sessionId = activeSessionIdRef.current;
-					if (!sessionId) {
-						setCommandNotice("No active session to delete.");
-						return;
-					}
-					if (pendingDeleteSessionId === sessionId) {
-						confirmDeleteSession(sessionId);
-					} else {
-						setPendingDeleteSessionId(sessionId);
-						setCommandNotice("Press /delete again to confirm deleting session.");
-					}
-					return;
-				}
-
 				if (slashCommand.command.name === SETTINGS_COMMAND) {
 					setCommandNotice("Settings screen not implemented yet.");
 					return;
@@ -995,21 +1022,24 @@ export function useSessionController(providedServices?: SessionServices) {
 				return;
 			}
 
-			dispatch({ type: "promptSubmitted" });
+			const userMessage: UserMessage = {
+				role: "user",
+				content: [{ type: "text", text }],
+				timestamp: Date.now(),
+			};
+
+			setShowWelcomeScreen(false);
+			dispatch({ type: "promptSubmitted", message: userMessage });
 
 			if (runtime.agent.state.isStreaming) {
-				runtime.agent.followUp({
-					role: "user",
-					content: [{ type: "text", text }],
-					timestamp: Date.now(),
-				});
+				runtime.agent.followUp(userMessage);
 				setCommandNotice("Queued message for the current session.");
 				syncRuntimeState();
 				return;
 			}
 
 			void runtime
-				.prompt(text)
+				.prompt(userMessage)
 				.then(() => {
 					syncRuntimeState();
 				})
@@ -1021,11 +1051,9 @@ export function useSessionController(providedServices?: SessionServices) {
 				});
 		},
 		[
-			confirmDeleteSession,
 			ensureActiveRuntime,
 			exitSession,
 			openRenameDialog,
-			pendingDeleteSessionId,
 			resetSession,
 			selectModel,
 			services,
@@ -1061,23 +1089,7 @@ export function useSessionController(providedServices?: SessionServices) {
 			}
 
 			if (activePickerRef.current?.kind === "sessions") {
-				const selectedSessionId =
-					activeSessionIdRef.current ?? services.sessionStore.listSessions(1)[0]?.id;
-				if (selectedSessionId && key.ctrl && key.name === "r") {
-					openRenameDialog(selectedSessionId);
-					return;
-				}
-				if (selectedSessionId && key.ctrl && key.name === "d") {
-					if (pendingDeleteSessionId === selectedSessionId) {
-						confirmDeleteSession(selectedSessionId);
-					} else {
-						setPendingDeleteSessionId(selectedSessionId);
-						setCommandNotice(
-							"Press Ctrl+D again to confirm deleting selected session.",
-						);
-					}
-					return;
-				}
+				return;
 			}
 
 			if (isExitShortcut(key)) {
@@ -1089,34 +1101,14 @@ export function useSessionController(providedServices?: SessionServices) {
 				resetSession();
 			}
 		},
-		[
-			cancelLoginDialog,
-			confirmDeleteSession,
-			exitSession,
-			openRenameDialog,
-			pendingDeleteSessionId,
-			resetSession,
-			services,
-		],
+		[cancelLoginDialog, exitSession, resetSession],
 	);
 
 	useKeyboard(handleKeyboardInput);
 
-	useEffect(() => {
-		if (activePicker?.kind !== "sessions") {
-			return;
-		}
-		const id = setInterval(() => {
-			setSessionPickerFrameIndex(
-				(current) => (current + 1) % BRAILLE_SPINNER_FRAMES.length,
-			);
-		}, 80);
-		return () => clearInterval(id);
-	}, [activePicker]);
-
-	const hasSubmittedUserMessages = state.messages.some(
-		(message) => message.role === "user",
-	);
+	const hasSubmittedUserMessages =
+		state.pendingUserMessages.length > 0 ||
+		state.messages.some((message) => message.role === "user");
 	const currentSessionTitle =
 		(activeSessionId
 			? sessionsRef.current.get(activeSessionId)?.title
@@ -1169,20 +1161,26 @@ export function useSessionController(providedServices?: SessionServices) {
 			const summaries = services.sessionStore.listSessions(500);
 			return {
 				kind: "sessions",
-				title: "Select session",
-				helperText: "Enter: switch  Ctrl+R: rename  Ctrl+D: delete (press twice)",
+				title: "Sessions",
 				emptyText: "No sessions yet.",
+				footerActions: [
+					{ label: "delete", shortcut: "ctrl+d" },
+					{ label: "rename", shortcut: "ctrl+r" },
+					{ label: "copy", shortcut: "ctrl+k" },
+				],
 				selectedItemId: activeSessionId ?? undefined,
+				pendingDeleteItemId: pendingDeleteSessionId,
 				items: summaries.map((session) => {
 					const runtimeEntry = sessionsRef.current.get(session.id);
-					const isStreaming = runtimeEntry?.runtime.agent.state.isStreaming ?? false;
+					const isStreaming =
+						runtimeEntry?.runtime.agent.state.isStreaming ?? false;
 					return {
 						id: session.id,
-						prefix: isStreaming
-							? BRAILLE_SPINNER_FRAMES[sessionPickerFrameIndex]
-							: " ",
 						label: session.title,
-						meta: formatRelativeTime(session.updatedAt),
+						updatedAt: session.updatedAt,
+						isCurrent: session.id === activeSessionId,
+						isStreaming,
+						isDeletePending: pendingDeleteSessionId === session.id,
 					};
 				}),
 			};
@@ -1301,7 +1299,7 @@ export function useSessionController(providedServices?: SessionServices) {
 
 	return {
 		state,
-		isNewSession: state.messages.length === 0,
+		isNewSession: showWelcomeScreen,
 		hasSubmittedUserMessages,
 		isBrowsingHistory: state.historyIndex !== null,
 		commandNotice,
@@ -1319,6 +1317,10 @@ export function useSessionController(providedServices?: SessionServices) {
 		commandPickerState,
 		closeCommandPicker: closeActivePicker,
 		selectCommandPickerItem,
+		copySessionIdFromPicker,
+		openSessionRenameDialog: openRenameDialog,
+		toggleSessionDelete,
+		clearPendingSessionDelete,
 		loginDialogState,
 		setLoginDialogInputValue,
 		submitLoginDialogInput,

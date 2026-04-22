@@ -6,10 +6,12 @@ import { copyToClipboard } from "./app/clipboard";
 import { copySelection } from "./app/copySelection";
 import { Toast, ToastProvider, useToast } from "./app/Toast";
 import { Composer, type ComposerHandle } from "./session/Composer";
+import { InlineCommandPickerDialog } from "./session/InlineCommandPickerDialog";
 import { LoginDialog } from "./session/LoginDialog";
 import { deriveSessionLayout } from "./session/layout";
 import { MessageList } from "./session/MessageList";
 import type { SessionServices } from "./session/providerState/services";
+import { SessionPickerDialog } from "./session/SessionPickerDialog";
 import { SessionRenameDialog } from "./session/SessionRenameDialog";
 import { SessionSidebar } from "./session/SessionSidebar";
 import { useSessionController } from "./session/useSessionController";
@@ -19,6 +21,7 @@ import { colors } from "./shared/theme";
 type AppProps = {
 	projectLine: string;
 	services?: SessionServices;
+	initialSessionId?: string | null;
 };
 
 export function App(props: AppProps) {
@@ -29,7 +32,7 @@ export function App(props: AppProps) {
 	);
 }
 
-function AppContent({ projectLine, services }: AppProps) {
+function AppContent({ projectLine, services, initialSessionId }: AppProps) {
 	const { width } = useTerminalDimensions();
 	const renderer = useRenderer();
 	const toast = useToast();
@@ -52,6 +55,10 @@ function AppContent({ projectLine, services }: AppProps) {
 		commandPickerState,
 		closeCommandPicker,
 		selectCommandPickerItem,
+		copySessionIdFromPicker,
+		openSessionRenameDialog,
+		toggleSessionDelete,
+		clearPendingSessionDelete,
 		loginDialogState,
 		setLoginDialogInputValue,
 		submitLoginDialogInput,
@@ -60,11 +67,20 @@ function AppContent({ projectLine, services }: AppProps) {
 		setSessionRenameValue,
 		submitSessionRename,
 		cancelSessionRename,
-	} = useSessionController(services);
+	} = useSessionController(services, initialSessionId ?? null);
 	const layout = deriveSessionLayout(width, isNewSession);
 	const composerRef = useRef<ComposerHandle>(null);
+	const sessionPickerState =
+		commandPickerState?.kind === "sessions" ? commandPickerState : null;
+	const dialogCommandPickerState =
+		commandPickerState && commandPickerState.kind !== "sessions"
+			? commandPickerState
+			: null;
 	const hasModalOpen =
-		loginDialogState !== null || sessionRenameDialogState !== null;
+		loginDialogState !== null ||
+		sessionRenameDialogState !== null ||
+		dialogCommandPickerState !== null ||
+		sessionPickerState !== null;
 	const modelLabel = activeModel
 		? availableProviderCount > 1
 			? `(${activeModel.provider}) ${activeModel.id}`
@@ -128,7 +144,7 @@ function AppContent({ projectLine, services }: AppProps) {
 						isBrowsingHistory={isBrowsingHistory}
 						onHistoryPrevious={showPreviousHistory}
 						onHistoryNext={showNextHistory}
-						commandPickerState={commandPickerState}
+						commandPickerState={null}
 						onCommandPickerClose={closeCommandPicker}
 						onCommandPickerSelect={selectCommandPickerItem}
 						composerRef={composerRef}
@@ -156,6 +172,7 @@ function AppContent({ projectLine, services }: AppProps) {
 						>
 							<MessageList
 								messages={state.messages}
+								pendingUserMessages={state.pendingUserMessages}
 								streamingMessage={state.streamingMessage}
 								isStreaming={state.isStreaming}
 								toolExecutions={state.toolExecutions}
@@ -177,7 +194,7 @@ function AppContent({ projectLine, services }: AppProps) {
 									isBrowsingHistory={isBrowsingHistory}
 									onHistoryPrevious={showPreviousHistory}
 									onHistoryNext={showNextHistory}
-									commandPickerState={commandPickerState}
+									commandPickerState={null}
 									onCommandPickerClose={closeCommandPicker}
 									onCommandPickerSelect={selectCommandPickerItem}
 									focused={!hasModalOpen}
@@ -219,6 +236,29 @@ function AppContent({ projectLine, services }: AppProps) {
 					onInputChange={setSessionRenameValue}
 					onSubmit={submitSessionRename}
 					onCancel={cancelSessionRename}
+				/>
+			) : null}
+
+			{sessionPickerState ? (
+				<SessionPickerDialog
+					state={sessionPickerState}
+					onClose={closeCommandPicker}
+					onSelect={selectCommandPickerItem}
+					onRename={(sessionId) => {
+						closeCommandPicker();
+						openSessionRenameDialog(sessionId);
+					}}
+					onCopy={copySessionIdFromPicker}
+					onDelete={toggleSessionDelete}
+					onClearPendingDelete={clearPendingSessionDelete}
+				/>
+			) : null}
+
+			{dialogCommandPickerState ? (
+				<InlineCommandPickerDialog
+					state={dialogCommandPickerState}
+					onClose={closeCommandPicker}
+					onSelect={selectCommandPickerItem}
 				/>
 			) : null}
 

@@ -2,7 +2,7 @@ import type { RefObject } from "react";
 
 import { colors } from "../shared/theme";
 import { Composer, type ComposerHandle } from "./Composer";
-import type { CommandPickerState } from "./commandPicker";
+import type { InlineCommandPickerState } from "./commandPicker";
 
 type WelcomeScreenProps = {
 	bannerText: string;
@@ -17,7 +17,7 @@ type WelcomeScreenProps = {
 	isBrowsingHistory: boolean;
 	onHistoryPrevious: () => void;
 	onHistoryNext: () => void;
-	commandPickerState: CommandPickerState | null;
+	commandPickerState: InlineCommandPickerState | null;
 	onCommandPickerClose: () => void;
 	onCommandPickerSelect: (itemId: string) => void;
 	composerRef: RefObject<ComposerHandle | null>;

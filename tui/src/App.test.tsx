@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
+import type { AgentRuntimeLike } from "./agent/runtime";
+import * as clipboard from "./app/clipboard";
 import { getCommandPickerRowId } from "./session/commandPicker";
 import { SIDEBAR_LAYOUT_WIDTH } from "./session/layout";
 import * as browser from "./session/providerState/browser";
+import type { SessionServices } from "./session/providerState/services";
 import { appLifecycle } from "./shared/lifecycle";
 import {
 	areScrollbarsHidden,
@@ -15,6 +18,7 @@ import {
 	isSidebarVisible,
 	moveMouseToRenderable,
 	pressCtrlC,
+	pressCtrlK,
 	pressCtrlN,
 	pressDown,
 	pressEnter,
@@ -29,21 +33,78 @@ import {
 	withApp,
 } from "./test/appTestUtils";
 import { createFakeSessionServices } from "./test/fakeSessionServices";
+import type { AgentMessage } from "./vendor/pi-agent-core/index.js";
+
+function createDelayedRuntime(sessionId: string): AgentRuntimeLike {
+	let resolvePrompt: (() => void) | null = null;
+	const state = {
+		model: null as unknown,
+		messages: [] as AgentMessage[],
+		streamingMessage: null,
+		isStreaming: false,
+		errorMessage: null as string | null,
+	};
+
+	return {
+		agent: { state } as unknown as AgentRuntimeLike["agent"],
+		sessionId,
+		toolDefinitions: {} as AgentRuntimeLike["toolDefinitions"],
+		setModel(model) {
+			state.model = model as unknown;
+		},
+		reset() {
+			state.messages = [];
+			state.streamingMessage = null;
+			state.isStreaming = false;
+			state.errorMessage = null;
+		},
+		prompt() {
+			return new Promise<void>((resolve) => {
+				resolvePrompt = () => {
+					state.isStreaming = false;
+					resolve();
+				};
+			});
+		},
+		abort() {
+			resolvePrompt?.();
+			resolvePrompt = null;
+		},
+		subscribe() {
+			return () => {};
+		},
+	};
+}
 
 function slashCommandRowId(commandName: string) {
 	return `slash-command-item-${commandName}`;
 }
 
+function createStoredSessionMessages(text: string): AgentMessage[] {
+	return [
+		{
+			role: "user",
+			content: [{ type: "text", text }],
+			timestamp: 1,
+		},
+	];
+}
+
 let openUrlSpy: ReturnType<typeof spyOn<typeof browser, "openUrlInBrowser">>;
+let copyToClipboardSpy: ReturnType<
+	typeof spyOn<typeof clipboard, "copyToClipboard">
+>;
 
 beforeEach(() => {
 	// Auth tests trigger browser-launch callbacks; stub them so the suite never
 	// leaves real browser windows behind.
 	openUrlSpy = spyOn(browser, "openUrlInBrowser").mockImplementation(() => {});
+	copyToClipboardSpy = spyOn(clipboard, "copyToClipboard").mockResolvedValue();
 });
 
 afterEach(() => {
 	openUrlSpy.mockRestore();
+	copyToClipboardSpy.mockRestore();
 });
 
 test("renders the supersky TUI shell (new session)", async () => {
@@ -122,7 +183,36 @@ test("typing slash opens the command menu", async () => {
 		expect(frame).toContain("/settings");
 		expect(frame).toContain("/new");
 		expect(frame).toContain("/exit");
+		expect(frame).not.toContain("/delete");
 	});
+});
+
+test("submitting from the welcome screen switches to the session view immediately", async () => {
+	const services: SessionServices = {
+		...createFakeSessionServices(),
+		createRuntime: (_model, options) =>
+			createDelayedRuntime(options?.sessionId ?? "delayed-session"),
+	};
+
+	await withApp(
+		async (setup) => {
+			await submitText(setup, "hello from welcome");
+
+			const banner = findRenderableByConstructorName(
+				setup.renderer.root,
+				"ASCIIFontRenderable",
+			);
+
+			expect(banner).toBeNull();
+			expect(getComposerText(setup)).toBe("");
+			expect(setup.captureCharFrame()).toContain("hello from welcome");
+			expect(setup.captureCharFrame()).toContain("Working...");
+			expect(setup.captureCharFrame()).not.toContain("Handled request.");
+		},
+		{ width: 110, height: 30 },
+		"~/projects/supersky:main",
+		services,
+	);
 });
 
 test("opening the command menu does not move the welcome composer", async () => {
@@ -224,6 +314,7 @@ test("submitting /login opens the provider picker", async () => {
 
 		const frame = setup.captureCharFrame();
 
+		expect(frame).toContain("Search");
 		expect(frame).toContain("Anthropic (Claude Pro/Max)");
 		expect(frame).toContain("GitHub Copilot");
 		expect(getComposerText(setup)).toBe("");
@@ -310,6 +401,7 @@ test("submitting /model shows an empty state until a provider is connected", asy
 
 		expect(frame).toContain("No models available. Use /login or set an API");
 		expect(frame).toContain("Select model");
+		expect(frame).toContain("Search");
 		expect(frame).not.toContain("Assistant");
 	});
 });
@@ -481,6 +573,171 @@ test("selected provider and model persist across app restarts", async () => {
 	);
 });
 
+test("reopening supersky starts on the welcome page instead of the last session", async () => {
+	const sharedServices = createFakeSessionServices();
+	sharedServices.sessionStore.createSession({
+		id: "stored-session",
+		title: "Stored session",
+		workspaceRoot: sharedServices.workspaceRoot,
+		model: null,
+	});
+	sharedServices.sessionStore.replaceSessionMessages(
+		"stored-session",
+		createStoredSessionMessages("saved message"),
+	);
+	sharedServices.sessionStore.setLastActiveSessionId("stored-session");
+
+	await withApp(
+		(setup) => {
+			const frame = setup.captureCharFrame();
+			const banner = findRenderableByConstructorName(
+				setup.renderer.root,
+				"ASCIIFontRenderable",
+			);
+
+			expect(banner).not.toBeNull();
+			expect(frame).not.toContain("saved message");
+		},
+		{ width: 110, height: 30 },
+		"~/projects/supersky:main",
+		sharedServices,
+	);
+});
+
+test("launching with a session id opens that session directly", async () => {
+	const sharedServices = createFakeSessionServices();
+	const sessionId = "stored-session";
+	sharedServices.sessionStore.createSession({
+		id: sessionId,
+		title: "Stored session",
+		workspaceRoot: sharedServices.workspaceRoot,
+		model: null,
+	});
+	sharedServices.sessionStore.replaceSessionMessages(
+		sessionId,
+		createStoredSessionMessages("saved message"),
+	);
+
+	await withApp(
+		(setup) => {
+			const frame = setup.captureCharFrame();
+			const banner = findRenderableByConstructorName(
+				setup.renderer.root,
+				"ASCIIFontRenderable",
+			);
+
+			expect(frame).toContain("saved message");
+			expect(banner).toBeNull();
+		},
+		{ width: 110, height: 30 },
+		"~/projects/supersky:main",
+		sharedServices,
+		{ initialSessionId: sessionId },
+	);
+});
+
+test("the session picker can copy the current session id", async () => {
+	const sharedServices = createFakeSessionServices();
+
+	await withApp(
+		async (setup) => {
+			await sendMessages(setup, 1);
+			await submitText(setup, "/sessions");
+			let frame = setup.captureCharFrame();
+
+			expect(frame).toContain("delete");
+			expect(frame).toContain("ctrl+d");
+			expect(frame).toContain("rename");
+			expect(frame).toContain("ctrl+r");
+			expect(frame).toContain("copy");
+			expect(frame).toContain("ctrl+k");
+
+			await pressCtrlK(setup);
+			await settleScrollLayout(setup);
+
+			const sessionId = sharedServices.sessionStore.listSessions()[0]?.id;
+
+			expect(sessionId).toBeTruthy();
+			expect(copyToClipboardSpy).toHaveBeenCalledWith(sessionId);
+			frame = setup.captureCharFrame();
+			expect(frame).toContain("Session ID copied to clipboard.");
+		},
+		{ width: 110, height: 30 },
+		"~/projects/supersky:main",
+		sharedServices,
+	);
+});
+
+test("the session picker groups sessions by day and filters by search", async () => {
+	const sharedServices = createFakeSessionServices();
+	const now = Date.now();
+	const olderTimestamp = now - 2 * 86_400_000;
+	const olderDayLabel = new Date(olderTimestamp).toDateString();
+
+	sharedServices.sessionStore.createSession({
+		id: "today-session",
+		title: "Today notes",
+		workspaceRoot: sharedServices.workspaceRoot,
+		model: null,
+		createdAt: now,
+	});
+	sharedServices.sessionStore.createSession({
+		id: "older-session",
+		title: "Older incident",
+		workspaceRoot: sharedServices.workspaceRoot,
+		model: null,
+		createdAt: olderTimestamp,
+	});
+
+	await withApp(
+		async (setup) => {
+			await submitText(setup, "/sessions");
+			await settleScrollLayout(setup);
+
+			let frame = setup.captureCharFrame();
+
+			expect(frame).toContain("Sessions");
+			expect(frame).toContain("Search");
+			expect(frame).toContain("Today");
+			expect(frame).toContain(olderDayLabel);
+			expect(frame).toContain("Today notes");
+			expect(frame).toContain("Older incident");
+
+			await typeText(setup, "older");
+			await settleScrollLayout(setup);
+
+			frame = setup.captureCharFrame();
+			expect(frame).toContain("Older incident");
+			expect(frame).not.toContain("Today notes");
+		},
+		{ width: 110, height: 30 },
+		"~/projects/supersky:main",
+		sharedServices,
+	);
+});
+
+test("renaming a session saves the submitted title", async () => {
+	const sharedServices = createFakeSessionServices();
+
+	await withApp(
+		async (setup) => {
+			await sendMessages(setup, 1);
+			await settleScrollLayout(setup);
+			await submitText(setup, "/rename");
+			await typeText(setup, " updated");
+			await pressEnter(setup);
+			await settleScrollLayout(setup);
+
+			expect(sharedServices.sessionStore.listSessions()[0]?.title).toBe(
+				"New session updated",
+			);
+		},
+		{ width: 110, height: 30 },
+		"~/projects/supersky:main",
+		sharedServices,
+	);
+});
+
 test("logging into another provider keeps the current model selected", async () => {
 	await withApp(async (setup) => {
 		await submitText(setup, "/login");
@@ -590,6 +847,25 @@ test("pressing ctrl+c quits the app", async () => {
 
 			expect(setup.renderer.isDestroyed).toBe(true);
 			expect(requestProcessExit).toHaveBeenCalledTimes(1);
+		});
+	} finally {
+		requestProcessExit.mockRestore();
+	}
+});
+
+test("pressing escape does not quit the app", async () => {
+	const requestProcessExit = spyOn(
+		appLifecycle,
+		"requestProcessExit",
+	).mockImplementation(() => {});
+
+	try {
+		await withApp(async (setup) => {
+			await pressEscape(setup);
+			await Promise.resolve();
+
+			expect(setup.renderer.isDestroyed).toBe(false);
+			expect(requestProcessExit).not.toHaveBeenCalled();
 		});
 	} finally {
 		requestProcessExit.mockRestore();

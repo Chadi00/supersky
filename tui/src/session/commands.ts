@@ -5,7 +5,6 @@ export const LOGOUT_COMMAND = "logout";
 export const MODEL_COMMAND = "model";
 export const SESSIONS_COMMAND = "sessions";
 export const RENAME_COMMAND = "rename";
-export const DELETE_COMMAND = "delete";
 export const SETTINGS_COMMAND = "settings";
 export const NEW_SESSION_COMMAND = "new";
 export const EXIT_COMMAND = "exit";
@@ -16,7 +15,6 @@ export type SlashCommandName =
 	| typeof MODEL_COMMAND
 	| typeof SESSIONS_COMMAND
 	| typeof RENAME_COMMAND
-	| typeof DELETE_COMMAND
 	| typeof SETTINGS_COMMAND
 	| typeof NEW_SESSION_COMMAND
 	| typeof EXIT_COMMAND;
@@ -51,10 +49,6 @@ const slashCommands: SlashCommand[] = [
 	{
 		name: RENAME_COMMAND,
 		description: "Rename current session",
-	},
-	{
-		name: DELETE_COMMAND,
-		description: "Delete current session",
 	},
 	{
 		name: SETTINGS_COMMAND,
@@ -186,7 +180,7 @@ export function isExitCommand(input: string) {
 }
 
 export function isExitShortcut(key: ShortcutKey) {
-	return key.name === "escape" || (key.ctrl && key.name === "c");
+	return key.ctrl && key.name === "c";
 }
 
 export function isNewSessionShortcut(key: ShortcutKey) {

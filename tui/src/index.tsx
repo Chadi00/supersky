@@ -1,6 +1,7 @@
 import { createCliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
 import { App } from "./App";
+import { resolveInitialSessionId } from "./app/launchArgs";
 import { resolveProjectLine } from "./app/projectLine";
 
 const renderer = await createCliRenderer({
@@ -12,4 +13,9 @@ const renderer = await createCliRenderer({
 	},
 });
 
-createRoot(renderer).render(<App projectLine={resolveProjectLine()} />);
+createRoot(renderer).render(
+	<App
+		projectLine={resolveProjectLine()}
+		initialSessionId={resolveInitialSessionId()}
+	/>,
+);

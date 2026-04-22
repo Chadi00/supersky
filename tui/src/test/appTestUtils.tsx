@@ -40,6 +40,10 @@ type ScrollboxNode = {
 
 export type AppTestSetup = Awaited<ReturnType<typeof testRender>>;
 
+type RenderAppOptions = {
+	initialSessionId?: string | null;
+};
+
 const DEFAULT_TERMINAL_SIZE: TerminalSize = {
 	width: 110,
 	height: 30,
@@ -144,9 +148,14 @@ export async function renderApp(
 	size: TerminalSize = DEFAULT_TERMINAL_SIZE,
 	projectLine = DEFAULT_PROJECT_LINE,
 	services: SessionServices = createFakeSessionServices(),
+	options: RenderAppOptions = {},
 ) {
 	const setup = await testRender(
-		<App projectLine={projectLine} services={services} />,
+		<App
+			projectLine={projectLine}
+			services={services}
+			initialSessionId={options.initialSessionId}
+		/>,
 		{
 			...size,
 			enableMouseMovement: true,
@@ -164,9 +173,10 @@ export async function withApp(
 	size: TerminalSize = DEFAULT_TERMINAL_SIZE,
 	projectLine = DEFAULT_PROJECT_LINE,
 	services: SessionServices = createFakeSessionServices(),
+	options: RenderAppOptions = {},
 ) {
 	return runAppTestSerial(async () => {
-		const setup = await renderApp(size, projectLine, services);
+		const setup = await renderApp(size, projectLine, services, options);
 
 		try {
 			await run(setup);
@@ -204,6 +214,13 @@ export async function pressCtrlC(setup: AppTestSetup) {
 
 export async function pressCtrlN(setup: AppTestSetup) {
 	await runInput(setup, () => setup.mockInput.pressKey("n", { ctrl: true }), {
+		renderPasses: 2,
+		settleMs: 0,
+	});
+}
+
+export async function pressCtrlK(setup: AppTestSetup) {
+	await runInput(setup, () => setup.mockInput.pressKey("k", { ctrl: true }), {
 		renderPasses: 2,
 		settleMs: 0,
 	});

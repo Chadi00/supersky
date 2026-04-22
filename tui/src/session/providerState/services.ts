@@ -1,4 +1,5 @@
 import type { AgentRuntimeLike } from "../../agent/runtime";
+import type { AgentMessage } from "../../vendor/pi-agent-core/index.js";
 import type { AuthStorageLike } from "./authStorage";
 import { AuthStorage } from "./authStorage";
 import type { ModelRegistryLike } from "./modelRegistry";
@@ -16,7 +17,13 @@ export type SessionServices = {
 	modelRegistry: ModelRegistryLike;
 	sessionStore: SessionStoreLike;
 	workspaceRoot: string;
-	createRuntime?: (model: Model<Api> | null) => AgentRuntimeLike | null;
+	createRuntime?: (
+		model: Model<Api> | null,
+		options?: {
+			sessionId: string;
+			initialMessages?: AgentMessage[];
+		},
+	) => AgentRuntimeLike | null;
 	paths: {
 		authPath: string;
 		settingsPath: string;

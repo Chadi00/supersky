@@ -23,6 +23,7 @@ export type ToolExecutionState = {
 export type SessionState = {
 	draft: string;
 	messages: AgentMessage[];
+	pendingUserMessages: UserMessage[];
 	streamingMessage: AssistantMessage | null;
 	toolExecutions: ToolExecutionState[];
 	isStreaming: boolean;
@@ -62,6 +63,7 @@ export function createInitialSessionState(): SessionState {
 	return {
 		draft: "",
 		messages: [],
+		pendingUserMessages: [],
 		streamingMessage: null,
 		toolExecutions: [],
 		isStreaming: false,

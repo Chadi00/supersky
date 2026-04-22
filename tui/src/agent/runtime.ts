@@ -26,7 +26,7 @@ export interface AgentRuntimeLike {
 	readonly toolDefinitions: BuiltInToolDefinitions;
 	setModel(model: Model<Api>): void;
 	reset(): void;
-	prompt(text: string): Promise<void>;
+	prompt(input: string | AgentMessage | AgentMessage[]): Promise<void>;
 	abort(): void;
 	subscribe(
 		listener: (event: AgentEvent, signal: AbortSignal) => void | Promise<void>,
@@ -90,8 +90,12 @@ export class SuperskyAgentRuntime implements AgentRuntimeLike {
 		this.agent.reset();
 	}
 
-	prompt(text: string) {
-		return this.agent.prompt(text);
+	prompt(input: string | AgentMessage | AgentMessage[]) {
+		if (typeof input === "string") {
+			return this.agent.prompt(input);
+		}
+
+		return this.agent.prompt(input);
 	}
 
 	abort() {
