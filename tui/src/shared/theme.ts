@@ -15,5 +15,4 @@ export const colors = {
   foregroundText: "#e8e8e8",
   userMessageBackground: "#1b1b1b",
   bannerText: "#d0d0d0",
-  sidebarStatusText: "#6a6a6a",
 } as const;

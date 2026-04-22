@@ -5,14 +5,17 @@ type AppFooterProps = {
   isNewSession: boolean;
   projectLine: string;
   modelName: string | null;
+  onMouseDown?: () => void;
 };
 
 export function AppFooter({
   isNewSession,
   projectLine,
   modelName,
+  onMouseDown,
 }: AppFooterProps) {
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: Footer clicks return focus to the composer.
     <box
       flexDirection="row"
       justifyContent="space-between"
@@ -21,6 +24,9 @@ export function AppFooter({
       paddingX={2}
       paddingTop={isNewSession ? 1 : 0}
       paddingBottom={1}
+      onMouseDown={() => {
+        onMouseDown?.();
+      }}
     >
       <text fg={colors.mutedText}>{projectLine}</text>
       <text>

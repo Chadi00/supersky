@@ -13,8 +13,6 @@ export const assistantDemoSummary = {
 export const sidebarData = {
   title: "Minimalist fullscreen TUI for supersky",
   usage: ["57,829 tokens", "6% used", "$0.00 spent"],
-  lspLabel: "LSP",
-  lspStatus: "idle",
   modifiedFiles: [
     { delta: "+102", path: "tui/src/session/useSessionController.ts" },
     { delta: "+78", path: "tui/src/App.test.tsx" },

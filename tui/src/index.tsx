@@ -7,6 +7,9 @@ const renderer = await createCliRenderer({
   exitOnCtrlC: false,
   enableMouseMovement: true,
   targetFps: 60,
+  consoleOptions: {
+    keyBindings: [{ name: "y", ctrl: true, action: "copy-selection" }],
+  },
 });
 
 createRoot(renderer).render(<App projectLine={resolveProjectLine()} />);

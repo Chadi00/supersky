@@ -4,7 +4,14 @@ import type {
   TextareaRenderable,
 } from "@opentui/core";
 import { useKeyboard } from "@opentui/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { colors } from "../shared/theme";
 import {
@@ -321,448 +328,470 @@ type ComposerProps = {
   justifyContent?: "center" | "flex-end";
 };
 
-export function Composer({
-  width,
-  draft,
-  commandNotice,
-  dismissComposerMenuToken,
-  onComposerMenuOpenChange,
-  resetToken,
-  onDraftChange,
-  onSubmit,
-  historyAvailable,
-  isBrowsingHistory,
-  onHistoryPrevious,
-  onHistoryNext,
-  commandPickerState,
-  onCommandPickerClose,
-  onCommandPickerSelect,
-  focused,
-  minHeight = COMPOSER_MIN_HEIGHT,
-  justifyContent = "center",
-}: ComposerProps) {
-  const textareaRef = useRef<TextareaRenderable | null>(null);
-  const [slashMenuQuery, setSlashMenuQuery] = useState<string | null>(null);
-  const [selectedSlashCommandIndex, setSelectedSlashCommandIndex] = useState(0);
-  const [selectedCommandPickerIndex, setSelectedCommandPickerIndex] =
-    useState(0);
+export type ComposerHandle = {
+  focus: () => void;
+};
 
-  const matchingSlashCommands = useMemo(
-    () => getMatchingSlashCommands(slashMenuQuery ?? ""),
-    [slashMenuQuery],
-  );
-  const selectedSlashCommand =
-    matchingSlashCommands[selectedSlashCommandIndex] ??
-    matchingSlashCommands[0];
-  const isSlashMenuOpen = slashMenuQuery !== null;
-  const isCommandPickerOpen = commandPickerState !== null;
-  const isComposerMenuOpen = isSlashMenuOpen || isCommandPickerOpen;
+export const Composer = forwardRef<ComposerHandle, ComposerProps>(
+  function Composer(
+    {
+      width,
+      draft,
+      commandNotice,
+      dismissComposerMenuToken,
+      onComposerMenuOpenChange,
+      resetToken,
+      onDraftChange,
+      onSubmit,
+      historyAvailable,
+      isBrowsingHistory,
+      onHistoryPrevious,
+      onHistoryNext,
+      commandPickerState,
+      onCommandPickerClose,
+      onCommandPickerSelect,
+      focused,
+      minHeight = COMPOSER_MIN_HEIGHT,
+      justifyContent = "center",
+    },
+    ref,
+  ) {
+    const textareaRef = useRef<TextareaRenderable | null>(null);
 
-  const closeSlashMenu = () => {
-    setSlashMenuQuery(null);
-    setSelectedSlashCommandIndex(0);
-  };
-
-  const scheduleSlashMenuSync = () => {
-    setTimeout(() => {
-      updateSlashMenu();
-    }, 0);
-  };
-
-  const updateSlashMenu = () => {
-    const textarea = textareaRef.current;
-    if (!textarea) {
-      closeSlashMenu();
-      return;
-    }
-
-    const nextSlashMenuQuery = getSlashMenuQuery(
-      textarea.plainText,
-      textarea.cursorOffset,
+    useImperativeHandle(
+      ref,
+      () => ({
+        focus: () => {
+          textareaRef.current?.focus();
+        },
+      }),
+      [],
     );
+    const [slashMenuQuery, setSlashMenuQuery] = useState<string | null>(null);
+    const [selectedSlashCommandIndex, setSelectedSlashCommandIndex] =
+      useState(0);
+    const [selectedCommandPickerIndex, setSelectedCommandPickerIndex] =
+      useState(0);
 
-    setSlashMenuQuery((currentQuery) => {
-      if (currentQuery !== nextSlashMenuQuery) {
-        setSelectedSlashCommandIndex(0);
-      }
-
-      return nextSlashMenuQuery;
-    });
-  };
-
-  const executeSlashCommand = (commandName: SlashCommandName) => {
-    const textarea = textareaRef.current;
-    if (!textarea) {
-      return;
-    }
-
-    textarea.clear();
-    closeSlashMenu();
-    onDraftChange("");
-    onSubmit(`/${commandName}`);
-  };
-
-  const executeSelectedSlashCommand = () => {
-    if (!selectedSlashCommand) {
-      return;
-    }
-
-    executeSlashCommand(selectedSlashCommand.name);
-  };
-
-  const executeSelectedCommandPickerItem = () => {
-    if (!commandPickerState) {
-      return;
-    }
-
-    const selectedItem =
-      commandPickerState.items[selectedCommandPickerIndex] ??
-      commandPickerState.items[0];
-    if (!selectedItem) {
-      return;
-    }
-
-    onCommandPickerSelect(selectedItem.id);
-  };
-
-  useEffect(() => {
-    const textarea = textareaRef.current;
-    if (!textarea) {
-      return;
-    }
-
-    if (textarea.plainText !== draft) {
-      textarea.setText(draft);
-      textarea.gotoBufferEnd();
-    }
-
-    const nextSlashMenuQuery = getSlashMenuQuery(draft, draft.length);
-    setSlashMenuQuery((currentQuery) => {
-      if (currentQuery !== nextSlashMenuQuery) {
-        setSelectedSlashCommandIndex(0);
-      }
-
-      return nextSlashMenuQuery;
-    });
-  }, [draft]);
-
-  useEffect(() => {
-    onComposerMenuOpenChange(isComposerMenuOpen);
-  }, [isComposerMenuOpen, onComposerMenuOpenChange]);
-
-  useEffect(() => {
-    if (!commandPickerState) {
-      setSelectedCommandPickerIndex(0);
-      return;
-    }
-
-    const nextSelectedIndex = commandPickerState.selectedItemId
-      ? commandPickerState.items.findIndex(
-          (item) => item.id === commandPickerState.selectedItemId,
-        )
-      : -1;
-    setSelectedCommandPickerIndex(
-      nextSelectedIndex >= 0 ? nextSelectedIndex : 0,
+    const matchingSlashCommands = useMemo(
+      () => getMatchingSlashCommands(slashMenuQuery ?? ""),
+      [slashMenuQuery],
     );
-  }, [commandPickerState]);
+    const selectedSlashCommand =
+      matchingSlashCommands[selectedSlashCommandIndex] ??
+      matchingSlashCommands[0];
+    const isSlashMenuOpen = slashMenuQuery !== null;
+    const isCommandPickerOpen = commandPickerState !== null;
+    const isComposerMenuOpen = isSlashMenuOpen || isCommandPickerOpen;
 
-  // When the session dismisses a composer menu (e.g. Escape), the token increments.
-  // React only to token changes. Do not list `commandPickerState` here: with a
-  // non-zero token, opening a provider/model picker would re-run the effect and
-  // call `onCommandPickerClose`, immediately closing the menu the user just opened.
-  // The session controller already clears `activePicker` on Escape; this effect only
-  // syncs local slash-menu and selection state.
-  useEffect(() => {
-    if (dismissComposerMenuToken === 0) {
-      return;
-    }
+    const closeSlashMenu = () => {
+      setSlashMenuQuery(null);
+      setSelectedSlashCommandIndex(0);
+    };
 
-    setSlashMenuQuery(null);
-    setSelectedSlashCommandIndex(0);
-    setSelectedCommandPickerIndex(0);
-  }, [dismissComposerMenuToken]);
+    const scheduleSlashMenuSync = () => {
+      setTimeout(() => {
+        updateSlashMenu();
+      }, 0);
+    };
 
-  useKeyboard((key) => {
-    if (!focused || key.name !== "escape" || !commandPickerState) {
-      return;
-    }
-
-    onCommandPickerClose();
-  });
-
-  const syncDraft = () => {
-    if (commandPickerState) {
-      onCommandPickerClose();
-      setSelectedCommandPickerIndex(0);
-    }
-
-    updateSlashMenu();
-    const nextDraft = textareaRef.current?.plainText ?? "";
-
-    if (nextDraft === draft) {
-      return;
-    }
-
-    onDraftChange(nextDraft);
-  };
-
-  const submitDraft = () => {
-    closeSlashMenu();
-    const submitted = textareaRef.current?.plainText ?? draft;
-    if (!submitted.trim()) {
-      return;
-    }
-
-    textareaRef.current?.clear();
-    onDraftChange("");
-    onSubmit(submitted);
-  };
-
-  const handleKeyDown = (key: KeyEvent) => {
-    const textarea = textareaRef.current;
-    if (
-      !textarea ||
-      !focused ||
-      key.ctrl ||
-      key.shift ||
-      key.meta ||
-      key.super ||
-      key.hyper
-    ) {
-      return;
-    }
-
-    if (isSlashMenuOpen) {
-      if (commandPickerState) {
-        return;
-      }
-
-      if (key.name === "escape") {
-        key.preventDefault();
-        key.stopPropagation();
+    const updateSlashMenu = () => {
+      const textarea = textareaRef.current;
+      if (!textarea) {
         closeSlashMenu();
         return;
       }
 
-      if (key.name === "up") {
-        key.preventDefault();
-        key.stopPropagation();
-        setSelectedSlashCommandIndex((currentIndex) => {
-          if (matchingSlashCommands.length === 0) {
-            return 0;
-          }
+      const nextSlashMenuQuery = getSlashMenuQuery(
+        textarea.plainText,
+        textarea.cursorOffset,
+      );
 
-          return currentIndex === 0
-            ? matchingSlashCommands.length - 1
-            : currentIndex - 1;
-        });
+      setSlashMenuQuery((currentQuery) => {
+        if (currentQuery !== nextSlashMenuQuery) {
+          setSelectedSlashCommandIndex(0);
+        }
+
+        return nextSlashMenuQuery;
+      });
+    };
+
+    const executeSlashCommand = (commandName: SlashCommandName) => {
+      const textarea = textareaRef.current;
+      if (!textarea) {
         return;
       }
 
-      if (key.name === "down") {
-        key.preventDefault();
-        key.stopPropagation();
-        setSelectedSlashCommandIndex((currentIndex) => {
-          if (matchingSlashCommands.length === 0) {
-            return 0;
-          }
+      textarea.clear();
+      closeSlashMenu();
+      onDraftChange("");
+      onSubmit(`/${commandName}`);
+    };
 
-          return currentIndex >= matchingSlashCommands.length - 1
-            ? 0
-            : currentIndex + 1;
-        });
+    const executeSelectedSlashCommand = () => {
+      if (!selectedSlashCommand) {
         return;
       }
 
-      if (
-        matchingSlashCommands.length > 0 &&
-        (key.name === "return" || key.name === "tab")
-      ) {
-        key.preventDefault();
-        key.stopPropagation();
-        executeSelectedSlashCommand();
-        return;
-      }
-    }
+      executeSlashCommand(selectedSlashCommand.name);
+    };
 
-    if (commandPickerState) {
-      if (key.name === "escape") {
-        key.preventDefault();
-        key.stopPropagation();
-        onCommandPickerClose();
+    const executeSelectedCommandPickerItem = () => {
+      if (!commandPickerState) {
         return;
       }
 
-      if (key.name === "up") {
-        key.preventDefault();
-        key.stopPropagation();
-        setSelectedCommandPickerIndex((currentIndex) => {
-          if (commandPickerState.items.length === 0) {
-            return 0;
-          }
-
-          return currentIndex === 0
-            ? commandPickerState.items.length - 1
-            : currentIndex - 1;
-        });
+      const selectedItem =
+        commandPickerState.items[selectedCommandPickerIndex] ??
+        commandPickerState.items[0];
+      if (!selectedItem) {
         return;
       }
 
-      if (key.name === "down") {
-        key.preventDefault();
-        key.stopPropagation();
-        setSelectedCommandPickerIndex((currentIndex) => {
-          if (commandPickerState.items.length === 0) {
-            return 0;
-          }
+      onCommandPickerSelect(selectedItem.id);
+    };
 
-          return currentIndex >= commandPickerState.items.length - 1
-            ? 0
-            : currentIndex + 1;
-        });
+    useEffect(() => {
+      const textarea = textareaRef.current;
+      if (!textarea) {
         return;
       }
 
-      if (
-        commandPickerState.items.length > 0 &&
-        (key.name === "return" || key.name === "tab")
-      ) {
-        key.preventDefault();
-        key.stopPropagation();
-        executeSelectedCommandPickerItem();
-        return;
-      }
-    }
-
-    if (key.name === "left" || key.name === "right" || key.name === "home") {
-      scheduleSlashMenuSync();
-    }
-
-    const lastLineIndex = Math.max(0, textarea.lineCount - 1);
-
-    if (key.name === "up") {
-      if (textarea.logicalCursor.row > 0) {
-        scheduleSlashMenuSync();
-        return;
-      }
-
-      if (textarea.cursorOffset > 0) {
-        key.preventDefault();
-        key.stopPropagation();
-        textarea.gotoBufferHome();
-        updateSlashMenu();
-        return;
-      }
-
-      if (!historyAvailable) {
-        scheduleSlashMenuSync();
-        return;
-      }
-
-      key.preventDefault();
-      key.stopPropagation();
-      onHistoryPrevious();
-      return;
-    }
-
-    if (key.name === "down") {
-      if (textarea.logicalCursor.row < lastLineIndex) {
-        scheduleSlashMenuSync();
-        return;
-      }
-
-      if (textarea.cursorOffset < textarea.plainText.length) {
-        key.preventDefault();
-        key.stopPropagation();
+      if (textarea.plainText !== draft) {
+        textarea.setText(draft);
         textarea.gotoBufferEnd();
-        updateSlashMenu();
+      }
+
+      const nextSlashMenuQuery = getSlashMenuQuery(draft, draft.length);
+      setSlashMenuQuery((currentQuery) => {
+        if (currentQuery !== nextSlashMenuQuery) {
+          setSelectedSlashCommandIndex(0);
+        }
+
+        return nextSlashMenuQuery;
+      });
+    }, [draft]);
+
+    useEffect(() => {
+      onComposerMenuOpenChange(isComposerMenuOpen);
+    }, [isComposerMenuOpen, onComposerMenuOpenChange]);
+
+    useEffect(() => {
+      if (!commandPickerState) {
+        setSelectedCommandPickerIndex(0);
         return;
       }
 
-      if (!isBrowsingHistory) {
+      const nextSelectedIndex = commandPickerState.selectedItemId
+        ? commandPickerState.items.findIndex(
+            (item) => item.id === commandPickerState.selectedItemId,
+          )
+        : -1;
+      setSelectedCommandPickerIndex(
+        nextSelectedIndex >= 0 ? nextSelectedIndex : 0,
+      );
+    }, [commandPickerState]);
+
+    // When the session dismisses a composer menu (e.g. Escape), the token increments.
+    // React only to token changes. Do not list `commandPickerState` here: with a
+    // non-zero token, opening a provider/model picker would re-run the effect and
+    // call `onCommandPickerClose`, immediately closing the menu the user just opened.
+    // The session controller already clears `activePicker` on Escape; this effect only
+    // syncs local slash-menu and selection state.
+    useEffect(() => {
+      if (dismissComposerMenuToken === 0) {
         return;
       }
 
-      key.preventDefault();
-      key.stopPropagation();
-      onHistoryNext();
-      return;
-    }
+      setSlashMenuQuery(null);
+      setSelectedSlashCommandIndex(0);
+      setSelectedCommandPickerIndex(0);
+    }, [dismissComposerMenuToken]);
 
-    if (key.name === "end") {
-      scheduleSlashMenuSync();
-    }
-  };
+    useKeyboard((key) => {
+      if (!focused || key.name !== "escape" || !commandPickerState) {
+        return;
+      }
 
-  return (
-    <box
-      flexDirection="column"
-      width={width}
-      maxWidth="100%"
-      gap={0}
-      overflow="visible"
-    >
-      <box position="relative" width="100%" overflow="visible">
-        {commandPickerState ? (
-          <CommandPickerMenu
-            picker={commandPickerState}
-            selectedIndex={selectedCommandPickerIndex}
-            onSelect={setSelectedCommandPickerIndex}
-            onExecute={onCommandPickerSelect}
-          />
-        ) : null}
-        {!commandPickerState && isSlashMenuOpen ? (
-          <SlashCommandMenu
-            commands={matchingSlashCommands}
-            selectedIndex={selectedSlashCommandIndex}
-            onSelect={setSelectedSlashCommandIndex}
-            onExecute={executeSlashCommand}
-          />
-        ) : null}
-        <box
-          width="100%"
-          flexDirection="row"
-          minHeight={minHeight}
-          alignItems="stretch"
-        >
-          <box
-            flexGrow={1}
-            flexDirection="column"
-            backgroundColor={colors.composerBackground}
-            paddingLeft={1}
-            paddingRight={1}
-            paddingTop={COMPOSER_VERTICAL_PADDING}
-            paddingBottom={COMPOSER_VERTICAL_PADDING}
-            minHeight={minHeight}
-            justifyContent={justifyContent}
-          >
-            <textarea
-              key={resetToken}
-              ref={textareaRef}
-              focused={focused}
-              placeholderColor={colors.mutedText}
-              initialValue={draft}
-              minHeight={1}
-              maxHeight={COMPOSER_MAX_TEXT_LINES}
-              backgroundColor={colors.composerBackground}
-              textColor={colors.foregroundText}
-              focusedBackgroundColor={colors.composerBackground}
-              focusedTextColor={colors.foregroundText}
-              wrapMode="word"
-              keyBindings={composerKeyBindings}
-              onKeyDown={handleKeyDown}
-              onContentChange={syncDraft}
-              onSubmit={submitDraft}
+      onCommandPickerClose();
+    });
+
+    const syncDraft = () => {
+      if (commandPickerState) {
+        onCommandPickerClose();
+        setSelectedCommandPickerIndex(0);
+      }
+
+      updateSlashMenu();
+      const nextDraft = textareaRef.current?.plainText ?? "";
+
+      if (nextDraft === draft) {
+        return;
+      }
+
+      onDraftChange(nextDraft);
+    };
+
+    const submitDraft = () => {
+      closeSlashMenu();
+      const submitted = textareaRef.current?.plainText ?? draft;
+      if (!submitted.trim()) {
+        return;
+      }
+
+      textareaRef.current?.clear();
+      onDraftChange("");
+      onSubmit(submitted);
+    };
+
+    const handleKeyDown = (key: KeyEvent) => {
+      const textarea = textareaRef.current;
+      if (
+        !textarea ||
+        !focused ||
+        key.ctrl ||
+        key.shift ||
+        key.meta ||
+        key.super ||
+        key.hyper
+      ) {
+        return;
+      }
+
+      if (isSlashMenuOpen) {
+        if (commandPickerState) {
+          return;
+        }
+
+        if (key.name === "escape") {
+          key.preventDefault();
+          key.stopPropagation();
+          closeSlashMenu();
+          return;
+        }
+
+        if (key.name === "up") {
+          key.preventDefault();
+          key.stopPropagation();
+          setSelectedSlashCommandIndex((currentIndex) => {
+            if (matchingSlashCommands.length === 0) {
+              return 0;
+            }
+
+            return currentIndex === 0
+              ? matchingSlashCommands.length - 1
+              : currentIndex - 1;
+          });
+          return;
+        }
+
+        if (key.name === "down") {
+          key.preventDefault();
+          key.stopPropagation();
+          setSelectedSlashCommandIndex((currentIndex) => {
+            if (matchingSlashCommands.length === 0) {
+              return 0;
+            }
+
+            return currentIndex >= matchingSlashCommands.length - 1
+              ? 0
+              : currentIndex + 1;
+          });
+          return;
+        }
+
+        if (
+          matchingSlashCommands.length > 0 &&
+          (key.name === "return" || key.name === "tab")
+        ) {
+          key.preventDefault();
+          key.stopPropagation();
+          executeSelectedSlashCommand();
+          return;
+        }
+      }
+
+      if (commandPickerState) {
+        if (key.name === "escape") {
+          key.preventDefault();
+          key.stopPropagation();
+          onCommandPickerClose();
+          return;
+        }
+
+        if (key.name === "up") {
+          key.preventDefault();
+          key.stopPropagation();
+          setSelectedCommandPickerIndex((currentIndex) => {
+            if (commandPickerState.items.length === 0) {
+              return 0;
+            }
+
+            return currentIndex === 0
+              ? commandPickerState.items.length - 1
+              : currentIndex - 1;
+          });
+          return;
+        }
+
+        if (key.name === "down") {
+          key.preventDefault();
+          key.stopPropagation();
+          setSelectedCommandPickerIndex((currentIndex) => {
+            if (commandPickerState.items.length === 0) {
+              return 0;
+            }
+
+            return currentIndex >= commandPickerState.items.length - 1
+              ? 0
+              : currentIndex + 1;
+          });
+          return;
+        }
+
+        if (
+          commandPickerState.items.length > 0 &&
+          (key.name === "return" || key.name === "tab")
+        ) {
+          key.preventDefault();
+          key.stopPropagation();
+          executeSelectedCommandPickerItem();
+          return;
+        }
+      }
+
+      if (key.name === "left" || key.name === "right" || key.name === "home") {
+        scheduleSlashMenuSync();
+      }
+
+      const lastLineIndex = Math.max(0, textarea.lineCount - 1);
+
+      if (key.name === "up") {
+        if (textarea.logicalCursor.row > 0) {
+          scheduleSlashMenuSync();
+          return;
+        }
+
+        if (textarea.cursorOffset > 0) {
+          key.preventDefault();
+          key.stopPropagation();
+          textarea.gotoBufferHome();
+          updateSlashMenu();
+          return;
+        }
+
+        if (!historyAvailable) {
+          scheduleSlashMenuSync();
+          return;
+        }
+
+        key.preventDefault();
+        key.stopPropagation();
+        onHistoryPrevious();
+        return;
+      }
+
+      if (key.name === "down") {
+        if (textarea.logicalCursor.row < lastLineIndex) {
+          scheduleSlashMenuSync();
+          return;
+        }
+
+        if (textarea.cursorOffset < textarea.plainText.length) {
+          key.preventDefault();
+          key.stopPropagation();
+          textarea.gotoBufferEnd();
+          updateSlashMenu();
+          return;
+        }
+
+        if (!isBrowsingHistory) {
+          return;
+        }
+
+        key.preventDefault();
+        key.stopPropagation();
+        onHistoryNext();
+        return;
+      }
+
+      if (key.name === "end") {
+        scheduleSlashMenuSync();
+      }
+    };
+
+    return (
+      <box
+        flexDirection="column"
+        width={width}
+        maxWidth="100%"
+        gap={0}
+        overflow="visible"
+      >
+        <box position="relative" width="100%" overflow="visible">
+          {commandPickerState ? (
+            <CommandPickerMenu
+              picker={commandPickerState}
+              selectedIndex={selectedCommandPickerIndex}
+              onSelect={setSelectedCommandPickerIndex}
+              onExecute={onCommandPickerSelect}
             />
+          ) : null}
+          {!commandPickerState && isSlashMenuOpen ? (
+            <SlashCommandMenu
+              commands={matchingSlashCommands}
+              selectedIndex={selectedSlashCommandIndex}
+              onSelect={setSelectedSlashCommandIndex}
+              onExecute={executeSlashCommand}
+            />
+          ) : null}
+          <box
+            width="100%"
+            flexDirection="row"
+            minHeight={minHeight}
+            alignItems="stretch"
+          >
+            <box
+              flexGrow={1}
+              flexDirection="column"
+              backgroundColor={colors.composerBackground}
+              paddingLeft={1}
+              paddingRight={1}
+              paddingTop={COMPOSER_VERTICAL_PADDING}
+              paddingBottom={COMPOSER_VERTICAL_PADDING}
+              minHeight={minHeight}
+              justifyContent={justifyContent}
+            >
+              <textarea
+                key={resetToken}
+                ref={textareaRef}
+                focused={focused}
+                placeholderColor={colors.mutedText}
+                initialValue={draft}
+                minHeight={1}
+                maxHeight={COMPOSER_MAX_TEXT_LINES}
+                backgroundColor={colors.composerBackground}
+                textColor={colors.foregroundText}
+                focusedBackgroundColor={colors.composerBackground}
+                focusedTextColor={colors.foregroundText}
+                wrapMode="word"
+                keyBindings={composerKeyBindings}
+                onKeyDown={handleKeyDown}
+                onContentChange={syncDraft}
+                onSubmit={submitDraft}
+              />
+            </box>
           </box>
         </box>
-      </box>
 
-      {commandNotice ? (
-        <box paddingLeft={1} paddingTop={0}>
-          <text fg={colors.warningText}>{commandNotice}</text>
-        </box>
-      ) : null}
-    </box>
-  );
-}
+        {commandNotice ? (
+          <box paddingLeft={1} paddingTop={0}>
+            <text fg={colors.warningText}>{commandNotice}</text>
+          </box>
+        ) : null}
+      </box>
+    );
+  },
+);
+
+Composer.displayName = "Composer";

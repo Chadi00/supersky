@@ -6,6 +6,7 @@ import {
   areScrollbarsHidden,
   captureRenderableGeometryByConstructorName,
   captureShellGeometry,
+  clickFirstScrollBox,
   clickRenderable,
   findRenderableByConstructorName,
   findScrollbox,
@@ -16,8 +17,8 @@ import {
   pressCtrlN,
   pressDown,
   pressEnter,
-  pressLinefeed,
   pressEscape,
+  pressLinefeed,
   pressTab,
   pressUp,
   sendMessages,
@@ -64,6 +65,18 @@ test("preserves rapid composer typing without resetting the draft", async () => 
     const frame = setup.captureCharFrame();
 
     expect(frame).toContain("fast typing should stay stable");
+  });
+});
+
+test("clicking the message list keeps keyboard input in the composer", async () => {
+  await withApp(async (setup) => {
+    await sendMessages(setup, 1);
+    await settleScrollLayout(setup);
+
+    await clickFirstScrollBox(setup);
+    await typeText(setup, "typed after click");
+
+    expect(getComposerText(setup)).toContain("typed after click");
   });
 });
 

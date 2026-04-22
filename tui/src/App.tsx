@@ -1,7 +1,11 @@
-import { useTerminalDimensions } from "@opentui/react";
+import { useRenderer, useTerminalDimensions } from "@opentui/react";
+import { useCallback, useEffect, useRef } from "react";
 
 import { AppFooter } from "./app/AppFooter";
-import { Composer } from "./session/Composer";
+import { copyToClipboard } from "./app/clipboard";
+import { copySelection } from "./app/copySelection";
+import { Toast, ToastProvider, useToast } from "./app/Toast";
+import { Composer, type ComposerHandle } from "./session/Composer";
 import { deriveSessionLayout } from "./session/layout";
 import { MessageList } from "./session/MessageList";
 import { SessionSidebar } from "./session/SessionSidebar";
@@ -13,8 +17,18 @@ type AppProps = {
   projectLine: string;
 };
 
-export function App({ projectLine }: AppProps) {
+export function App(props: AppProps) {
+  return (
+    <ToastProvider>
+      <AppContent {...props} />
+    </ToastProvider>
+  );
+}
+
+function AppContent({ projectLine }: AppProps) {
   const { width } = useTerminalDimensions();
+  const renderer = useRenderer();
+  const toast = useToast();
   const {
     state,
     isNewSession,
@@ -33,13 +47,41 @@ export function App({ projectLine }: AppProps) {
     selectCommandPickerItem,
   } = useSessionController();
   const layout = deriveSessionLayout(width, isNewSession);
+  const composerRef = useRef<ComposerHandle>(null);
+  const focusComposer = useCallback(() => {
+    composerRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    renderer.console.onCopySelection = (text: string) => {
+      void (async () => {
+        if (!text || text.length === 0) return;
+        try {
+          await copyToClipboard(text);
+          toast.show({ message: "Copied to clipboard", variant: "info" });
+        } catch (e) {
+          toast.error(e);
+        }
+        renderer.clearSelection();
+      })();
+    };
+    return () => {
+      renderer.console.onCopySelection = undefined;
+    };
+  }, [renderer, toast]);
+
+  const handleRootMouseUp = useCallback(() => {
+    copySelection(renderer, toast);
+  }, [renderer, toast]);
 
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: Copy-on-mouse-up for terminal selection (OpenCode pattern).
     <box
       width="100%"
       height="100%"
       flexDirection="column"
       backgroundColor={colors.background}
+      onMouseUp={handleRootMouseUp}
     >
       <box flexGrow={1} flexDirection="column" minHeight={0}>
         {isNewSession ? (
@@ -60,6 +102,8 @@ export function App({ projectLine }: AppProps) {
             commandPickerState={commandPickerState}
             onCommandPickerClose={closeCommandPicker}
             onCommandPickerSelect={selectCommandPickerItem}
+            composerRef={composerRef}
+            onSurfaceMouseDown={focusComposer}
           />
         ) : (
           <box
@@ -72,11 +116,22 @@ export function App({ projectLine }: AppProps) {
             gap={1}
             minHeight={0}
           >
-            <box flexGrow={1} flexDirection="column" minHeight={0} minWidth={0}>
-              <MessageList messages={state.messages} />
+            {/* biome-ignore lint/a11y/noStaticElementInteractions: Refocus composer when clicking the session panel chrome. */}
+            <box
+              flexGrow={1}
+              flexDirection="column"
+              minHeight={0}
+              minWidth={0}
+              onMouseDown={focusComposer}
+            >
+              <MessageList
+                messages={state.messages}
+                onMouseDown={focusComposer}
+              />
 
               <box paddingTop={0} flexShrink={0}>
                 <Composer
+                  ref={composerRef}
                   width="100%"
                   draft={state.draft}
                   commandNotice={null}
@@ -99,7 +154,7 @@ export function App({ projectLine }: AppProps) {
 
             {layout.showSidebar ? (
               <box width={layout.sidebarWidth} flexShrink={0} minHeight={0}>
-                <SessionSidebar />
+                <SessionSidebar onMouseDown={focusComposer} />
               </box>
             ) : null}
           </box>
@@ -110,7 +165,10 @@ export function App({ projectLine }: AppProps) {
         isNewSession={isNewSession}
         projectLine={projectLine}
         modelName={activeModel?.name ?? null}
+        onMouseDown={focusComposer}
       />
+
+      <Toast />
     </box>
   );
 }

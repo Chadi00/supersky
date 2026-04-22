@@ -40,10 +40,10 @@ test("clamps the welcome composer width for very small and very large terminals"
 });
 
 test("uses the short welcome banner below the sidebar layout width", () => {
-  expect(deriveSessionLayout(SIDEBAR_LAYOUT_WIDTH - 1, true).welcomeBannerText).toBe(
-    WELCOME_BANNER_SHORT_TEXT,
-  );
-  expect(deriveSessionLayout(SIDEBAR_LAYOUT_WIDTH, true).welcomeBannerText).toBe(
-    WELCOME_BANNER_FULL_TEXT,
-  );
+  expect(
+    deriveSessionLayout(SIDEBAR_LAYOUT_WIDTH - 1, true).welcomeBannerText,
+  ).toBe(WELCOME_BANNER_SHORT_TEXT);
+  expect(
+    deriveSessionLayout(SIDEBAR_LAYOUT_WIDTH, true).welcomeBannerText,
+  ).toBe(WELCOME_BANNER_FULL_TEXT);
 });

@@ -7,9 +7,10 @@ import type { SessionMessage } from "./types";
 
 type MessageListProps = {
   messages: SessionMessage[];
+  onMouseDown?: () => void;
 };
 
-export function MessageList({ messages }: MessageListProps) {
+export function MessageList({ messages, onMouseDown }: MessageListProps) {
   const setMessagesScrollRef = useCallback(
     (node: ScrollBoxRenderable | null) => {
       if (!node) {
@@ -23,10 +24,12 @@ export function MessageList({ messages }: MessageListProps) {
   );
 
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: Message list clicks refocus the composer textarea.
     <scrollbox
       ref={setMessagesScrollRef}
       flexGrow={1}
       focused={false}
+      focusable={false}
       stickyScroll
       stickyStart="bottom"
       style={{
@@ -37,6 +40,9 @@ export function MessageList({ messages }: MessageListProps) {
         scrollbarOptions: { visible: false },
         verticalScrollbarOptions: { visible: false },
         horizontalScrollbarOptions: { visible: false },
+      }}
+      onMouseDown={() => {
+        onMouseDown?.();
       }}
     >
       <box flexDirection="column" padding={1} gap={0}>

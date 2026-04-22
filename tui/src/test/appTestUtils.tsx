@@ -320,6 +320,26 @@ export async function settleScrollLayout(setup: AppTestSetup) {
   await runInput(setup, () => undefined, { settleMs: 30 });
 }
 
+/** Clicks the center of the first scrollbox in the tree (in-session message list). */
+export async function clickFirstScrollBox(setup: AppTestSetup) {
+  const scrollbox = findRenderable(
+    setup.renderer.root,
+    (candidate) => candidate.constructor?.name === "ScrollBoxRenderable",
+  );
+
+  const node = expectGeometryNode(scrollbox, "ScrollBoxRenderable");
+
+  await runInput(
+    setup,
+    () =>
+      setup.mockMouse.click(
+        node.x + Math.max(1, Math.floor(node.width / 2)),
+        node.y + Math.max(1, Math.floor(node.height / 2)),
+      ),
+    { renderPasses: 3 },
+  );
+}
+
 export function findScrollbox(node: unknown): ScrollboxNode | null {
   const scrollbox = findRenderable(
     node,

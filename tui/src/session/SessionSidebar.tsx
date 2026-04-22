@@ -1,13 +1,22 @@
+import { useState } from "react";
+
 import { sidebarData } from "../app/config";
 import { colors } from "../shared/theme";
 import { SIDEBAR_MIN_WIDTH } from "./layout";
 
 type SessionSidebarProps = {
   showModified?: boolean;
+  onMouseDown?: () => void;
 };
 
-export function SessionSidebar({ showModified = true }: SessionSidebarProps) {
+export function SessionSidebar({
+  showModified = true,
+  onMouseDown,
+}: SessionSidebarProps) {
+  const [modifiedFilesOpen, setModifiedFilesOpen] = useState(true);
+
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: Sidebar clicks refocus the composer textarea.
     <box
       width="100%"
       flexGrow={1}
@@ -16,6 +25,9 @@ export function SessionSidebar({ showModified = true }: SessionSidebarProps) {
       padding={1}
       gap={1}
       minWidth={SIDEBAR_MIN_WIDTH}
+      onMouseDown={() => {
+        onMouseDown?.();
+      }}
     >
       <text fg={colors.foregroundText}>
         <strong>{sidebarData.title}</strong>
@@ -27,19 +39,33 @@ export function SessionSidebar({ showModified = true }: SessionSidebarProps) {
           </text>
         ))}
       </box>
-      <text fg={colors.mutedText}>{sidebarData.lspLabel}</text>
-      <text fg={colors.sidebarStatusText}>{sidebarData.lspStatus}</text>
       {showModified ? (
         <box flexDirection="column" gap={0}>
-          <text fg={colors.dimText}>
-            Modified files <span fg={colors.dimText}>▼</span>
-          </text>
-          {sidebarData.modifiedFiles.map((file) => (
-            <text key={file.path}>
-              <span fg={colors.successText}>{file.delta}</span>
-              <span fg={colors.dimText}> {file.path}</span>
+          {/* biome-ignore lint/a11y/noStaticElementInteractions: Toggle modified-files section visibility. */}
+          <box
+            flexDirection="row"
+            onMouseDown={(event) => {
+              if (event.button !== 0) {
+                return;
+              }
+              event.stopPropagation();
+              setModifiedFilesOpen((open) => !open);
+              onMouseDown?.();
+            }}
+          >
+            <text fg={colors.dimText}>
+              Modified files{" "}
+              <span fg={colors.dimText}>{modifiedFilesOpen ? "▼" : "▶"}</span>
             </text>
-          ))}
+          </box>
+          {modifiedFilesOpen
+            ? sidebarData.modifiedFiles.map((file) => (
+                <text key={file.path}>
+                  <span fg={colors.successText}>{file.delta}</span>
+                  <span fg={colors.dimText}> {file.path}</span>
+                </text>
+              ))
+            : null}
         </box>
       ) : null}
       <box flexGrow={1} />

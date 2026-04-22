@@ -1,5 +1,7 @@
+import type { RefObject } from "react";
+
 import { colors } from "../shared/theme";
-import { Composer } from "./Composer";
+import { Composer, type ComposerHandle } from "./Composer";
 import type { CommandPickerState } from "./commandPicker";
 
 type WelcomeScreenProps = {
@@ -19,6 +21,8 @@ type WelcomeScreenProps = {
   commandPickerState: CommandPickerState | null;
   onCommandPickerClose: () => void;
   onCommandPickerSelect: (itemId: string) => void;
+  composerRef: RefObject<ComposerHandle | null>;
+  onSurfaceMouseDown: () => void;
 };
 
 export function WelcomeScreen({
@@ -38,22 +42,33 @@ export function WelcomeScreen({
   commandPickerState,
   onCommandPickerClose,
   onCommandPickerSelect,
+  composerRef,
+  onSurfaceMouseDown,
 }: WelcomeScreenProps) {
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: Welcome chrome clicks refocus the composer textarea.
     <box
       flexGrow={1}
       flexDirection="column"
       justifyContent="center"
       alignItems="center"
       paddingBottom={2}
+      onMouseDown={() => {
+        onSurfaceMouseDown();
+      }}
     >
       <box flexDirection="column" alignItems="center" gap={0} marginBottom={1}>
         <box height={7} justifyContent="center" alignItems="center">
-          <ascii-font font="block" text={bannerText} color={colors.bannerText} />
+          <ascii-font
+            font="block"
+            text={bannerText}
+            color={colors.bannerText}
+          />
         </box>
       </box>
 
       <Composer
+        ref={composerRef}
         width={composerWidth}
         draft={draft}
         commandNotice={commandNotice}
