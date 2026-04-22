@@ -1,24 +1,11 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.4.12/schema.json",
-  "files": {
-    "ignoreUnknown": true,
-    "includes": [
-      "src/**/*",
-      "!src/vendor/pi-ai",
-      "package.json",
-      "tsconfig.json",
-      "README.md",
-      "biome.json"
-    ]
-  },
-  "formatter": {
-    "enabled": true,
-    "indentStyle": "space"
-  },
-  "linter": {
-    "enabled": true,
-    "rules": {
-      "recommended": true
-    }
-  }
+	"$schema": "https://biomejs.dev/schemas/2.4.12/schema.json",
+	"files": {
+		"includes": [
+			"src/**/*.ts",
+			"src/**/*.tsx",
+			"scripts/**/*.ts",
+			"!src/vendor"
+		]
+	}
 }

@@ -8,459 +8,459 @@ import { createFakeSessionServices } from "./fakeSessionServices";
 const DEFAULT_PROJECT_LINE = "~/projects/supersky:main";
 
 type TerminalSize = {
-  width: number;
-  height: number;
+	width: number;
+	height: number;
 };
 
 type RenderableNode = {
-  constructor?: { name?: string };
-  id?: string;
-  getChildren?: () => unknown[];
-  x?: number;
-  y?: number;
-  width?: number;
-  height?: number;
-  plainText?: string;
-  verticalScrollBar?: { visible: boolean };
-  horizontalScrollBar?: { visible: boolean };
+	constructor?: { name?: string };
+	id?: string;
+	getChildren?: () => unknown[];
+	x?: number;
+	y?: number;
+	width?: number;
+	height?: number;
+	plainText?: string;
+	verticalScrollBar?: { visible: boolean };
+	horizontalScrollBar?: { visible: boolean };
 };
 
 type GeometryNode = {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  getChildren: () => unknown[];
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+	getChildren: () => unknown[];
 };
 
 type ScrollboxNode = {
-  verticalScrollBar: { visible: boolean };
-  horizontalScrollBar: { visible: boolean };
+	verticalScrollBar: { visible: boolean };
+	horizontalScrollBar: { visible: boolean };
 };
 
 export type AppTestSetup = Awaited<ReturnType<typeof testRender>>;
 
 const DEFAULT_TERMINAL_SIZE: TerminalSize = {
-  width: 110,
-  height: 30,
+	width: 110,
+	height: 30,
 };
 
 // OpenTUI renderers share terminal-style global input state, so App tests must run one at a time.
 let appTestQueue = Promise.resolve();
 
 function isRenderableNode(node: unknown): node is RenderableNode {
-  return typeof node === "object" && node !== null;
+	return typeof node === "object" && node !== null;
 }
 
 function getChildren(node: unknown) {
-  if (!isRenderableNode(node) || typeof node.getChildren !== "function") {
-    return [];
-  }
+	if (!isRenderableNode(node) || typeof node.getChildren !== "function") {
+		return [];
+	}
 
-  return node.getChildren();
+	return node.getChildren();
 }
 
 function expectGeometryNode(node: unknown, label: string): GeometryNode {
-  if (
-    !isRenderableNode(node) ||
-    typeof node.x !== "number" ||
-    typeof node.y !== "number" ||
-    typeof node.width !== "number" ||
-    typeof node.height !== "number" ||
-    typeof node.getChildren !== "function"
-  ) {
-    throw new Error(`Expected ${label} geometry node`);
-  }
+	if (
+		!isRenderableNode(node) ||
+		typeof node.x !== "number" ||
+		typeof node.y !== "number" ||
+		typeof node.width !== "number" ||
+		typeof node.height !== "number" ||
+		typeof node.getChildren !== "function"
+	) {
+		throw new Error(`Expected ${label} geometry node`);
+	}
 
-  return node as GeometryNode;
+	return node as GeometryNode;
 }
 
 function findRenderable(
-  node: unknown,
-  predicate: (candidate: RenderableNode) => boolean,
+	node: unknown,
+	predicate: (candidate: RenderableNode) => boolean,
 ): RenderableNode | null {
-  if (!isRenderableNode(node)) {
-    return null;
-  }
+	if (!isRenderableNode(node)) {
+		return null;
+	}
 
-  if (predicate(node)) {
-    return node;
-  }
+	if (predicate(node)) {
+		return node;
+	}
 
-  for (const child of getChildren(node)) {
-    const found = findRenderable(child, predicate);
-    if (found) {
-      return found;
-    }
-  }
+	for (const child of getChildren(node)) {
+		const found = findRenderable(child, predicate);
+		if (found) {
+			return found;
+		}
+	}
 
-  return null;
+	return null;
 }
 
 function runAppTestSerial<T>(work: () => Promise<T>) {
-  const nextRun = appTestQueue.then(work, work);
-  appTestQueue = nextRun.then(
-    () => undefined,
-    () => undefined,
-  );
+	const nextRun = appTestQueue.then(work, work);
+	appTestQueue = nextRun.then(
+		() => undefined,
+		() => undefined,
+	);
 
-  return nextRun;
+	return nextRun;
 }
 
 async function flushRenders(setup: AppTestSetup, renderPasses = 1) {
-  for (let pass = 0; pass < renderPasses; pass += 1) {
-    await setup.renderOnce();
-  }
+	for (let pass = 0; pass < renderPasses; pass += 1) {
+		await setup.renderOnce();
+	}
 }
 
 async function runInput(
-  setup: AppTestSetup,
-  action: () => void | Promise<void>,
-  options?: {
-    renderPasses?: number;
-    settleMs?: number;
-  },
+	setup: AppTestSetup,
+	action: () => void | Promise<void>,
+	options?: {
+		renderPasses?: number;
+		settleMs?: number;
+	},
 ) {
-  await act(async () => {
-    await action();
+	await act(async () => {
+		await action();
 
-    if (options?.settleMs) {
-      await new Promise((resolve) => setTimeout(resolve, options.settleMs));
-    }
+		if (options?.settleMs) {
+			await new Promise((resolve) => setTimeout(resolve, options.settleMs));
+		}
 
-    await flushRenders(setup, options?.renderPasses ?? 1);
-  });
+		await flushRenders(setup, options?.renderPasses ?? 1);
+	});
 }
 
 async function destroyApp(setup: AppTestSetup) {
-  act(() => {
-    setup.renderer.destroy();
-  });
+	act(() => {
+		setup.renderer.destroy();
+	});
 
-  await new Promise((resolve) => setTimeout(resolve, 0));
+	await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 export async function renderApp(
-  size: TerminalSize = DEFAULT_TERMINAL_SIZE,
-  projectLine = DEFAULT_PROJECT_LINE,
-  services: SessionServices = createFakeSessionServices(),
+	size: TerminalSize = DEFAULT_TERMINAL_SIZE,
+	projectLine = DEFAULT_PROJECT_LINE,
+	services: SessionServices = createFakeSessionServices(),
 ) {
-  const setup = await testRender(
-    <App projectLine={projectLine} services={services} />,
-    {
-      ...size,
-      enableMouseMovement: true,
-      exitOnCtrlC: false,
-    },
-  );
+	const setup = await testRender(
+		<App projectLine={projectLine} services={services} />,
+		{
+			...size,
+			enableMouseMovement: true,
+			exitOnCtrlC: false,
+		},
+	);
 
-  await runInput(setup, () => undefined);
+	await runInput(setup, () => undefined);
 
-  return setup;
+	return setup;
 }
 
 export async function withApp(
-  run: (setup: AppTestSetup) => Promise<void> | void,
-  size: TerminalSize = DEFAULT_TERMINAL_SIZE,
-  projectLine = DEFAULT_PROJECT_LINE,
-  services: SessionServices = createFakeSessionServices(),
+	run: (setup: AppTestSetup) => Promise<void> | void,
+	size: TerminalSize = DEFAULT_TERMINAL_SIZE,
+	projectLine = DEFAULT_PROJECT_LINE,
+	services: SessionServices = createFakeSessionServices(),
 ) {
-  return runAppTestSerial(async () => {
-    const setup = await renderApp(size, projectLine, services);
+	return runAppTestSerial(async () => {
+		const setup = await renderApp(size, projectLine, services);
 
-    try {
-      await run(setup);
-    } finally {
-      await destroyApp(setup);
-    }
-  });
+		try {
+			await run(setup);
+		} finally {
+			await destroyApp(setup);
+		}
+	});
 }
 
 export async function typeText(setup: AppTestSetup, text: string) {
-  await runInput(setup, () => setup.mockInput.typeText(text), {
-    renderPasses: 3,
-  });
+	await runInput(setup, () => setup.mockInput.typeText(text), {
+		renderPasses: 3,
+	});
 }
 
 export async function submitText(setup: AppTestSetup, text: string) {
-  await typeText(setup, text);
-  await pressEnter(setup);
-  await runInput(setup, () => undefined, {
-    renderPasses: 2,
-  });
+	await typeText(setup, text);
+	await pressEnter(setup);
+	await runInput(setup, () => undefined, {
+		renderPasses: 2,
+	});
 }
 
 export async function pressEnter(setup: AppTestSetup) {
-  await runInput(setup, () => setup.mockInput.pressEnter(), {
-    renderPasses: 5,
-  });
+	await runInput(setup, () => setup.mockInput.pressEnter(), {
+		renderPasses: 5,
+	});
 }
 
 export async function pressCtrlC(setup: AppTestSetup) {
-  await runInput(setup, () => setup.mockInput.pressCtrlC(), {
-    renderPasses: 2,
-  });
+	await runInput(setup, () => setup.mockInput.pressCtrlC(), {
+		renderPasses: 2,
+	});
 }
 
 export async function pressCtrlN(setup: AppTestSetup) {
-  await runInput(setup, () => setup.mockInput.pressKey("n", { ctrl: true }), {
-    renderPasses: 2,
-    settleMs: 0,
-  });
+	await runInput(setup, () => setup.mockInput.pressKey("n", { ctrl: true }), {
+		renderPasses: 2,
+		settleMs: 0,
+	});
 }
 
 export async function pressUp(setup: AppTestSetup) {
-  await runInput(setup, () => setup.mockInput.pressArrow("up"), {
-    renderPasses: 2,
-  });
+	await runInput(setup, () => setup.mockInput.pressArrow("up"), {
+		renderPasses: 2,
+	});
 }
 
 export async function pressDown(setup: AppTestSetup) {
-  await runInput(setup, () => setup.mockInput.pressArrow("down"), {
-    renderPasses: 2,
-  });
+	await runInput(setup, () => setup.mockInput.pressArrow("down"), {
+		renderPasses: 2,
+	});
 }
 
 export async function pressLinefeed(setup: AppTestSetup) {
-  await runInput(setup, () => setup.mockInput.pressKey("LINEFEED"));
+	await runInput(setup, () => setup.mockInput.pressKey("LINEFEED"));
 }
 
 export async function pressTab(setup: AppTestSetup) {
-  await runInput(setup, () => setup.mockInput.pressTab(), {
-    renderPasses: 2,
-  });
+	await runInput(setup, () => setup.mockInput.pressTab(), {
+		renderPasses: 2,
+	});
 }
 
 export async function pressEscape(setup: AppTestSetup) {
-  await runInput(setup, () => setup.mockInput.pressEscape(), {
-    renderPasses: 2,
-  });
+	await runInput(setup, () => setup.mockInput.pressEscape(), {
+		renderPasses: 2,
+	});
 }
 
 export async function moveMouseToRenderable(
-  setup: AppTestSetup,
-  renderableId: string,
+	setup: AppTestSetup,
+	renderableId: string,
 ) {
-  const node = expectGeometryNode(
-    findRenderableById(setup.renderer.root, renderableId),
-    renderableId,
-  );
+	const node = expectGeometryNode(
+		findRenderableById(setup.renderer.root, renderableId),
+		renderableId,
+	);
 
-  await runInput(
-    setup,
-    () =>
-      setup.mockMouse.moveTo(
-        node.x + Math.max(0, Math.floor((node.width - 1) / 2)),
-        node.y + Math.max(0, Math.floor((node.height - 1) / 2)),
-      ),
-    {
-      renderPasses: 2,
-    },
-  );
+	await runInput(
+		setup,
+		() =>
+			setup.mockMouse.moveTo(
+				node.x + Math.max(0, Math.floor((node.width - 1) / 2)),
+				node.y + Math.max(0, Math.floor((node.height - 1) / 2)),
+			),
+		{
+			renderPasses: 2,
+		},
+	);
 }
 
 export async function clickRenderable(
-  setup: AppTestSetup,
-  renderableId: string,
+	setup: AppTestSetup,
+	renderableId: string,
 ) {
-  const node = expectGeometryNode(
-    findRenderableById(setup.renderer.root, renderableId),
-    renderableId,
-  );
+	const node = expectGeometryNode(
+		findRenderableById(setup.renderer.root, renderableId),
+		renderableId,
+	);
 
-  await runInput(
-    setup,
-    () =>
-      setup.mockMouse.click(
-        node.x + Math.max(0, Math.floor((node.width - 1) / 2)),
-        node.y + Math.max(0, Math.floor((node.height - 1) / 2)),
-      ),
-    {
-      renderPasses: 3,
-    },
-  );
+	await runInput(
+		setup,
+		() =>
+			setup.mockMouse.click(
+				node.x + Math.max(0, Math.floor((node.width - 1) / 2)),
+				node.y + Math.max(0, Math.floor((node.height - 1) / 2)),
+			),
+		{
+			renderPasses: 3,
+		},
+	);
 }
 
 export async function scrollRenderable(
-  setup: AppTestSetup,
-  renderableId: string,
-  direction: "up" | "down" | "left" | "right",
+	setup: AppTestSetup,
+	renderableId: string,
+	direction: "up" | "down" | "left" | "right",
 ) {
-  const node = expectGeometryNode(
-    findRenderableById(setup.renderer.root, renderableId),
-    renderableId,
-  );
+	const node = expectGeometryNode(
+		findRenderableById(setup.renderer.root, renderableId),
+		renderableId,
+	);
 
-  await runInput(
-    setup,
-    () =>
-      setup.mockMouse.scroll(
-        node.x + Math.max(0, Math.floor((node.width - 1) / 2)),
-        node.y + Math.max(0, Math.floor((node.height - 1) / 2)),
-        direction,
-      ),
-    {
-      renderPasses: 2,
-    },
-  );
+	await runInput(
+		setup,
+		() =>
+			setup.mockMouse.scroll(
+				node.x + Math.max(0, Math.floor((node.width - 1) / 2)),
+				node.y + Math.max(0, Math.floor((node.height - 1) / 2)),
+				direction,
+			),
+		{
+			renderPasses: 2,
+		},
+	);
 }
 
 export async function sendMessages(
-  setup: AppTestSetup,
-  count: number,
-  startIndex = 0,
+	setup: AppTestSetup,
+	count: number,
+	startIndex = 0,
 ) {
-  await runInput(
-    setup,
-    async () => {
-      for (let index = 0; index < count; index += 1) {
-        await setup.mockInput.typeText(`message ${startIndex + index}`);
-        setup.mockInput.pressEnter();
-        await flushRenders(setup);
-      }
-    },
-    { renderPasses: 1 },
-  );
+	await runInput(
+		setup,
+		async () => {
+			for (let index = 0; index < count; index += 1) {
+				await setup.mockInput.typeText(`message ${startIndex + index}`);
+				setup.mockInput.pressEnter();
+				await flushRenders(setup);
+			}
+		},
+		{ renderPasses: 1 },
+	);
 }
 
 export async function settleScrollLayout(setup: AppTestSetup) {
-  await runInput(setup, () => undefined, { settleMs: 30 });
+	await runInput(setup, () => undefined, { settleMs: 30 });
 }
 
 /** Clicks the center of the first scrollbox in the tree (in-session message list). */
 export async function clickFirstScrollBox(setup: AppTestSetup) {
-  const scrollbox = findRenderable(
-    setup.renderer.root,
-    (candidate) => candidate.constructor?.name === "ScrollBoxRenderable",
-  );
+	const scrollbox = findRenderable(
+		setup.renderer.root,
+		(candidate) => candidate.constructor?.name === "ScrollBoxRenderable",
+	);
 
-  const node = expectGeometryNode(scrollbox, "ScrollBoxRenderable");
+	const node = expectGeometryNode(scrollbox, "ScrollBoxRenderable");
 
-  await runInput(
-    setup,
-    () =>
-      setup.mockMouse.click(
-        node.x + Math.max(1, Math.floor(node.width / 2)),
-        node.y + Math.max(1, Math.floor(node.height / 2)),
-      ),
-    { renderPasses: 3 },
-  );
+	await runInput(
+		setup,
+		() =>
+			setup.mockMouse.click(
+				node.x + Math.max(1, Math.floor(node.width / 2)),
+				node.y + Math.max(1, Math.floor(node.height / 2)),
+			),
+		{ renderPasses: 3 },
+	);
 }
 
 export function findScrollbox(node: unknown): ScrollboxNode | null {
-  const scrollbox = findRenderable(
-    node,
-    (candidate) =>
-      candidate.constructor?.name === "ScrollBoxRenderable" &&
-      typeof candidate.verticalScrollBar?.visible === "boolean" &&
-      typeof candidate.horizontalScrollBar?.visible === "boolean",
-  );
+	const scrollbox = findRenderable(
+		node,
+		(candidate) =>
+			candidate.constructor?.name === "ScrollBoxRenderable" &&
+			typeof candidate.verticalScrollBar?.visible === "boolean" &&
+			typeof candidate.horizontalScrollBar?.visible === "boolean",
+	);
 
-  return scrollbox as ScrollboxNode | null;
+	return scrollbox as ScrollboxNode | null;
 }
 
 export function findRenderableByConstructorName(
-  node: unknown,
-  constructorName: string,
+	node: unknown,
+	constructorName: string,
 ) {
-  return findRenderable(
-    node,
-    (candidate) => candidate.constructor?.name === constructorName,
-  );
+	return findRenderable(
+		node,
+		(candidate) => candidate.constructor?.name === constructorName,
+	);
 }
 
 export function findRenderableById(node: unknown, id: string) {
-  return findRenderable(node, (candidate) => candidate.id === id);
+	return findRenderable(node, (candidate) => candidate.id === id);
 }
 
 export function captureRenderableGeometryByConstructorName(
-  node: unknown,
-  constructorName: string,
+	node: unknown,
+	constructorName: string,
 ) {
-  const renderable = expectGeometryNode(
-    findRenderableByConstructorName(node, constructorName),
-    constructorName,
-  );
+	const renderable = expectGeometryNode(
+		findRenderableByConstructorName(node, constructorName),
+		constructorName,
+	);
 
-  return {
-    x: renderable.x,
-    y: renderable.y,
-    width: renderable.width,
-    height: renderable.height,
-  };
+	return {
+		x: renderable.x,
+		y: renderable.y,
+		width: renderable.width,
+		height: renderable.height,
+	};
 }
 
 export function captureRenderableGeometryById(node: unknown, id: string) {
-  const renderable = expectGeometryNode(findRenderableById(node, id), id);
+	const renderable = expectGeometryNode(findRenderableById(node, id), id);
 
-  return {
-    x: renderable.x,
-    y: renderable.y,
-    width: renderable.width,
-    height: renderable.height,
-  };
+	return {
+		x: renderable.x,
+		y: renderable.y,
+		width: renderable.width,
+		height: renderable.height,
+	};
 }
 
 export function areScrollbarsHidden(scrollbox: ScrollboxNode | null) {
-  return (
-    scrollbox !== null &&
-    !scrollbox.verticalScrollBar.visible &&
-    !scrollbox.horizontalScrollBar.visible
-  );
+	return (
+		scrollbox !== null &&
+		!scrollbox.verticalScrollBar.visible &&
+		!scrollbox.horizontalScrollBar.visible
+	);
 }
 
 export function getComposerText(setup: AppTestSetup) {
-  const textarea = findRenderableByConstructorName(
-    setup.renderer.root,
-    "TextareaRenderable",
-  );
+	const textarea = findRenderableByConstructorName(
+		setup.renderer.root,
+		"TextareaRenderable",
+	);
 
-  if (!textarea || typeof textarea.plainText !== "string") {
-    throw new Error("Expected composer textarea");
-  }
+	if (!textarea || typeof textarea.plainText !== "string") {
+		throw new Error("Expected composer textarea");
+	}
 
-  return textarea.plainText;
+	return textarea.plainText;
 }
 
 export function isSidebarVisible(setup: AppTestSetup) {
-  const appShell = getChildren(setup.renderer.root)[0];
-  const body = getChildren(appShell)[0];
-  const sessionLayout = getChildren(body)[0];
+	const appShell = getChildren(setup.renderer.root)[0];
+	const body = getChildren(appShell)[0];
+	const sessionLayout = getChildren(body)[0];
 
-  return getChildren(sessionLayout).length > 1;
+	return getChildren(sessionLayout).length > 1;
 }
 
 export function captureShellGeometry(root: unknown) {
-  const appShell = expectGeometryNode(getChildren(root)[0], "app shell");
-  const body = expectGeometryNode(appShell.getChildren()[0], "body");
-  const footer = expectGeometryNode(appShell.getChildren()[1], "footer");
-  const sessionLayout = expectGeometryNode(
-    body.getChildren()[0],
-    "session layout",
-  );
-  const mainPanel = expectGeometryNode(
-    sessionLayout.getChildren()[0],
-    "main session panel",
-  );
-  const sidebarNode = sessionLayout.getChildren()[1];
-  const scrollbox = expectGeometryNode(findScrollbox(root), "scrollbox");
-  const composer = expectGeometryNode(
-    findRenderableByConstructorName(root, "TextareaRenderable"),
-    "composer textarea",
-  );
-  const sidebar = sidebarNode
-    ? expectGeometryNode(sidebarNode, "session sidebar")
-    : null;
+	const appShell = expectGeometryNode(getChildren(root)[0], "app shell");
+	const body = expectGeometryNode(appShell.getChildren()[0], "body");
+	const footer = expectGeometryNode(appShell.getChildren()[1], "footer");
+	const sessionLayout = expectGeometryNode(
+		body.getChildren()[0],
+		"session layout",
+	);
+	const mainPanel = expectGeometryNode(
+		sessionLayout.getChildren()[0],
+		"main session panel",
+	);
+	const sidebarNode = sessionLayout.getChildren()[1];
+	const scrollbox = expectGeometryNode(findScrollbox(root), "scrollbox");
+	const composer = expectGeometryNode(
+		findRenderableByConstructorName(root, "TextareaRenderable"),
+		"composer textarea",
+	);
+	const sidebar = sidebarNode
+		? expectGeometryNode(sidebarNode, "session sidebar")
+		: null;
 
-  return {
-    scrollboxX: scrollbox.x,
-    footerY: footer.y,
-    footerHeight: footer.height,
-    bodyHeight: body.height,
-    composerX: composer.x,
-    composerY: composer.y,
-    composerHeight: composer.height,
-    mainBottom: mainPanel.y + mainPanel.height,
-    sidebarBottom: sidebar ? sidebar.y + sidebar.height : null,
-  };
+	return {
+		scrollboxX: scrollbox.x,
+		footerY: footer.y,
+		footerHeight: footer.height,
+		bodyHeight: body.height,
+		composerX: composer.x,
+		composerY: composer.y,
+		composerHeight: composer.height,
+		mainBottom: mainPanel.y + mainPanel.height,
+		sidebarBottom: sidebar ? sidebar.y + sidebar.height : null,
+	};
 }

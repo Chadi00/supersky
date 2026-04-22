@@ -1,130 +1,132 @@
+import type { AgentMessage } from "../vendor/pi-agent-core/index.js";
+import type { AssistantMessage } from "../vendor/pi-ai/index.js";
 import {
-  createInitialSessionState,
-  type SessionState,
-  type UserSessionMessage,
+	createInitialSessionState,
+	getSubmittedUserMessages,
+	getUserMessageText,
+	type SessionState,
+	type ToolExecutionState,
 } from "./types";
 
 export type SessionAction =
-  | { type: "draftChanged"; value: string }
-  | { type: "historyPrevious" }
-  | { type: "historyNext" }
-  | {
-      type: "messageSubmitted";
-      sessionId: string;
-      text: string;
-      timestamp: string;
-    }
-  | { type: "sessionReset" };
-
-function getUserMessages(messages: SessionState["messages"]) {
-  return messages.filter(
-    (message): message is UserSessionMessage => message.role === "user",
-  );
-}
+	| { type: "draftChanged"; value: string }
+	| { type: "historyPrevious" }
+	| { type: "historyNext" }
+	| { type: "promptSubmitted" }
+	| {
+			type: "runtimeStateReplaced";
+			messages: AgentMessage[];
+			streamingMessage: AssistantMessage | null;
+			toolExecutions: ToolExecutionState[];
+			isStreaming: boolean;
+			errorMessage: string | null;
+	  }
+	| { type: "sessionReset" };
 
 export function sessionReducer(
-  state: SessionState,
-  action: SessionAction,
+	state: SessionState,
+	action: SessionAction,
 ): SessionState {
-  switch (action.type) {
-    case "draftChanged": {
-      if (state.draft === action.value) {
-        return state;
-      }
+	switch (action.type) {
+		case "draftChanged": {
+			if (state.draft === action.value) {
+				return state;
+			}
 
-      return {
-        ...state,
-        draft: action.value,
-      };
-    }
+			return {
+				...state,
+				draft: action.value,
+			};
+		}
 
-    case "historyPrevious": {
-      const userMessages = getUserMessages(state.messages);
-      if (userMessages.length === 0) {
-        return state;
-      }
+		case "historyPrevious": {
+			const userMessages = getSubmittedUserMessages(state.messages);
+			if (userMessages.length === 0) {
+				return state;
+			}
 
-      const nextHistoryIndex =
-        state.historyIndex === null
-          ? userMessages.length - 1
-          : Math.max(0, state.historyIndex - 1);
-      const nextHistoryDraft =
-        state.historyIndex === null ? state.draft : state.historyDraft;
-      const nextDraft = userMessages[nextHistoryIndex]?.content ?? state.draft;
+			const nextHistoryIndex =
+				state.historyIndex === null
+					? userMessages.length - 1
+					: Math.max(0, state.historyIndex - 1);
+			const nextHistoryDraft =
+				state.historyIndex === null ? state.draft : state.historyDraft;
+			const nextMessage = userMessages[nextHistoryIndex];
+			const nextDraft = nextMessage
+				? getUserMessageText(nextMessage)
+				: state.draft;
 
-      if (
-        state.historyIndex === nextHistoryIndex &&
-        state.historyDraft === nextHistoryDraft &&
-        state.draft === nextDraft
-      ) {
-        return state;
-      }
+			if (
+				state.historyIndex === nextHistoryIndex &&
+				state.historyDraft === nextHistoryDraft &&
+				state.draft === nextDraft
+			) {
+				return state;
+			}
 
-      return {
-        ...state,
-        draft: nextDraft,
-        historyIndex: nextHistoryIndex,
-        historyDraft: nextHistoryDraft,
-      };
-    }
+			return {
+				...state,
+				draft: nextDraft,
+				historyIndex: nextHistoryIndex,
+				historyDraft: nextHistoryDraft,
+			};
+		}
 
-    case "historyNext": {
-      if (state.historyIndex === null) {
-        return state;
-      }
+		case "historyNext": {
+			if (state.historyIndex === null) {
+				return state;
+			}
 
-      const userMessages = getUserMessages(state.messages);
-      if (userMessages.length === 0) {
-        return state;
-      }
+			const userMessages = getSubmittedUserMessages(state.messages);
+			if (userMessages.length === 0) {
+				return state;
+			}
 
-      if (state.historyIndex >= userMessages.length - 1) {
-        return {
-          ...state,
-          draft: state.historyDraft ?? "",
-          historyIndex: null,
-          historyDraft: null,
-        };
-      }
+			if (state.historyIndex >= userMessages.length - 1) {
+				return {
+					...state,
+					draft: state.historyDraft ?? "",
+					historyIndex: null,
+					historyDraft: null,
+				};
+			}
 
-      const nextHistoryIndex = state.historyIndex + 1;
+			const nextHistoryIndex = state.historyIndex + 1;
+			const nextMessage = userMessages[nextHistoryIndex];
 
-      return {
-        ...state,
-        draft: userMessages[nextHistoryIndex]?.content ?? state.draft,
-        historyIndex: nextHistoryIndex,
-      };
-    }
+			return {
+				...state,
+				draft: nextMessage ? getUserMessageText(nextMessage) : state.draft,
+				historyIndex: nextHistoryIndex,
+			};
+		}
 
-    case "messageSubmitted": {
-      const nextIndex = state.messages.length;
+		case "promptSubmitted": {
+			return {
+				...state,
+				draft: "",
+				composerResetToken: state.composerResetToken + 1,
+				historyIndex: null,
+				historyDraft: null,
+			};
+		}
 
-      return {
-        draft: "",
-        composerResetToken: state.composerResetToken + 1,
-        historyIndex: null,
-        historyDraft: null,
-        messages: [
-          ...state.messages,
-          {
-            id: `${action.sessionId}-${nextIndex}`,
-            role: "user",
-            content: action.text,
-            timestamp: action.timestamp,
-          },
-          {
-            id: `${action.sessionId}-${nextIndex + 1}`,
-            role: "assistant",
-          },
-        ],
-      };
-    }
+		case "runtimeStateReplaced": {
+			return {
+				...state,
+				messages: action.messages,
+				streamingMessage: action.streamingMessage,
+				toolExecutions: action.toolExecutions,
+				isStreaming: action.isStreaming,
+				errorMessage: action.errorMessage,
+			};
+		}
 
-    case "sessionReset": {
-      return {
-        ...createInitialSessionState(),
-        composerResetToken: state.composerResetToken + 1,
-      };
-    }
-  }
+		case "sessionReset": {
+			return {
+				...createInitialSessionState(),
+				composerResetToken: state.composerResetToken + 1,
+			};
+		}
+	}
 }
