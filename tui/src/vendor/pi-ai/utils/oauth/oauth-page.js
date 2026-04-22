@@ -1,4 +1,11 @@
-const LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" aria-hidden="true"><path fill="#fff" fill-rule="evenodd" d="M165.29 165.29 H517.36 V400 H400 V517.36 H282.65 V634.72 H165.29 Z M282.65 282.65 V400 H400 V282.65 Z"/><path fill="#fff" d="M517.36 400 H634.72 V634.72 H517.36 Z"/></svg>`;
+const BRAND_ASCII = String.raw`  _____                             _           
+ / ____|                           | |          
+| (___  _   _ _ __   ___ _ __ ___| | ___   _ 
+ \___ \| | | | '_ \ / _ \ '__/ __| |/ / | | |
+ ____) | |_| | |_) |  __/ |  \__ \   <| |_| |
+|_____/ \__,_| .__/ \___|_|  |___/_|\_\\__, |
+             | |                        __/ |
+             |_|                       |___/`;
 function escapeHtml(value) {
     return value
         .replaceAll("&", "&amp;")
@@ -48,11 +55,14 @@ function renderPage(options) {
       align-items: center;
       justify-content: center;
     }
-    .logo {
-      width: 72px;
-      height: 72px;
-      display: block;
-      margin-bottom: 24px;
+    .brand {
+      margin: 0 0 24px;
+      color: var(--text);
+      font-family: var(--font-mono);
+      font-size: 13px;
+      line-height: 1.15;
+      white-space: pre;
+      text-align: left;
     }
     h1 {
       margin: 0 0 10px;
@@ -79,7 +89,7 @@ function renderPage(options) {
 </head>
 <body>
   <main>
-    <div class="logo">${LOGO_SVG}</div>
+    <pre class="brand" aria-hidden="true">${BRAND_ASCII}</pre>
     <h1>${heading}</h1>
     <p>${message}</p>
     ${details ? `<div class="details">${details}</div>` : ""}
