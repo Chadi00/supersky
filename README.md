@@ -1,102 +1,72 @@
 # Supersky
 
-Supersky is a coding agent harness inspired by [pi.dev](https://pi.dev).
+**Supersky** is a small coding-agent harness (short system prompt, four tools: `read`, `edit`, `write`, `bash`) plus a fullscreen terminal UI on [OpenTUI](https://opentui.com) — the same TUI stack OpenCode uses. It takes cues from [pi.dev](https://pi.dev): a tight agent core, with sessions, slash commands, and keyboard shortcuts in the shell around it.
 
-The core idea is simple:
+This repo includes **OpenCode** project hooks under `.opencode/` (commands, skills) for developing Supersky with OpenCode.
 
-- keep the harness tiny
-- keep the agent loop clean
-- keep the tool surface minimal
-- push advanced power-user features outside the core
+---
 
-Supersky should feel like **pi at the core**, but offer a much more powerful environment around that core.
+## Run it
 
-## Vision
+From the `tui` package:
 
-Most coding agent projects get heavier over time: larger prompts, more tools, more orchestration, more layers of abstraction, and more places for reliability to break down.
+```bash
+cd tui
+bun install
+chmod +x bin/supersky
+bun link
+```
 
-Supersky takes the opposite approach.
+Run **`supersky`** from any project directory to open the UI with that folder as the working tree.
 
-The base harness should remain extremely minimal and understandable:
+Development:
 
-- a very short system prompt
-- only 4 tools: `read`, `edit`, `write`, and `bash`
-- a lightweight, reliable agent loop
-- simple codepaths that are easy to inspect and debug
+```bash
+bun run dev      # dev entry
+bun run test     # tests
+bun run check    # lint + typecheck + test
+```
 
-The goal is **not** to compete by making the base agent more complex.
-The goal is to build a better environment for using that agent.
+---
 
-## Core Philosophy
+## Using the UI
 
-### 1. Minimal harness
-The harness should stay small, fast, and easy to reason about.
+| Keys | Action |
+|------|--------|
+| **Enter** | Send the message |
+| **Shift+Enter** | New line in the composer |
+| **↑ / ↓** | Composer history |
+| **/** | Slash command picker |
+| **!** / **!!** | Run shell (with / without extra context) |
+| **Esc** | Close dialog or cancel shell / streaming |
+| **Ctrl+N** | New session |
+| **Ctrl+C** | Quit |
+| In **sessions**: **Ctrl+D** delete, **Ctrl+R** rename, **Ctrl+K** copy session id |
 
-### 2. Strong defaults
-The default experience should be reliable without requiring prompt engineering or complex configuration.
+Type **`exit`** and press Enter in the composer to quit.
 
-### 3. Powerful environment
-Advanced functionality should live around the harness, not inside it.
+---
 
-### 4. Forkable workflows
-Users should be able to checkpoint, rewind, branch, compare, and share agent sessions naturally.
+## Slash commands
 
-### 5. Built for power users
-Supersky should support serious iterative workflows: experimentation, evals, recovery, collaboration, and reproducibility.
+Prefix with `/` in the composer (or pick from the menu):
 
-## What Makes Supersky Different
+| Command | What it does |
+|---------|----------------|
+| `/login` | Connect a provider |
+| `/logout` | Disconnect a provider |
+| `/model` | Change model |
+| `/sessions` | List and switch sessions |
+| `/rename` | Rename current session |
+| `/settings` | Configure Supersky |
+| `/new` | Start a new session |
+| `/fork` | Fork from the last user message |
+| `/export` | Export session transcript |
+| `/copy` | Copy the last assistant message |
+| `/hotkey` | Show hotkeys |
+| `/variants` | Change thinking level |
+| `/compact` | Compact the active session |
+| `/editor` | Open the project in your editor |
+| `/exit` | Quit |
 
-The main differentiation is not the core loop itself.
-It is the surrounding system.
-
-Planned feature areas include:
-
-- **Branching and checkpoints** — save progress, branch from any point, and explore alternatives safely
-- **Rewind / fork workflows** — go back in time, retry from earlier states, and compare outcomes
-- **Cloud sessions** — continue work from anywhere with persistent remote state
-- **Sharing and realtime collaboration** — collaborate on sessions, inspect changes, and hand off work
-- **Export / import** — move sessions and artifacts between local and cloud environments
-- **Stronger context management** — better control over what the agent sees and remembers
-- **Tests and evals workflows** — run repeatable verification and benchmark agent behavior over time
-
-## Design Principles
-
-- **Keep the core boring**
-  - short prompt
-  - minimal tools
-  - predictable behavior
-  - easy debugging
-
-- **Add power at the edges**
-  - session management
-  - history and replay
-  - collaboration
-  - cloud sync
-  - eval infrastructure
-
-- **Optimize for clarity over cleverness**
-  - readable code
-  - small abstractions
-  - explicit state transitions
-
-- **Make experimentation safe**
-  - checkpoints
-  - branching
-  - reversible actions
-  - reproducible runs
-
-## Non-Goals
-
-Supersky is not trying to become:
-
-- a bloated autonomous framework
-- a giant prompt-engineering playground
-- a kitchen-sink tool host with dozens of built-ins
-- a complex replacement for the simplicity that makes pi effective
-
-
-## Summary
-
-Supersky is a minimal coding agent harness with a maximal focus on workflow power.
-
-If pi showed that a coding agent can be effective with a tiny core, Supersky aims to prove that you can keep that core intact while building a dramatically more capable environment around it.
+More detail for contributors: [`tui/README.md`](tui/README.md).
