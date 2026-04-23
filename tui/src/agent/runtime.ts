@@ -1,10 +1,13 @@
+import { getVisibleTranscriptMessages } from "../session/compaction.js";
 import type { AuthStorageLike } from "../session/providerState/authStorage";
 import {
 	Agent,
 	type AgentEvent,
 	type AgentMessage,
+	type ThinkingLevel,
 } from "../vendor/pi-agent-core/index.js";
 import { type Api, type Model, streamSimple } from "../vendor/pi-ai/index.js";
+import { supportsXhigh } from "../vendor/pi-ai/models.js";
 import { convertSuperskyAgentMessagesToLlm } from "./bashExecutionTypes.js";
 import { buildSystemPrompt } from "./systemPrompt";
 import {
@@ -19,6 +22,7 @@ export type AgentRuntimeOptions = {
 	model: Model<Api>;
 	sessionId: string;
 	initialMessages?: AgentMessage[];
+	thinkingLevel?: ThinkingLevel;
 };
 
 export interface AgentRuntimeLike {
@@ -27,6 +31,7 @@ export interface AgentRuntimeLike {
 	readonly cwd: string;
 	readonly toolDefinitions: BuiltInToolDefinitions;
 	setModel(model: Model<Api>): void;
+	setThinkingLevel(level: ThinkingLevel): void;
 	reset(): void;
 	prompt(input: string | AgentMessage | AgentMessage[]): Promise<void>;
 	abort(): void;
@@ -40,6 +45,22 @@ function formatCurrentDate(date: Date) {
 	const month = String(date.getMonth() + 1).padStart(2, "0");
 	const day = String(date.getDate()).padStart(2, "0");
 	return `${year}-${month}-${day}`;
+}
+
+export function clampThinkingLevel(model: Model<Api>, level: ThinkingLevel) {
+	if (!model.reasoning) {
+		return "off";
+	}
+
+	if (level === "off") {
+		return "off";
+	}
+
+	if (level === "xhigh" && !supportsXhigh(model)) {
+		return "high";
+	}
+
+	return level;
 }
 
 export class SuperskyAgentRuntime implements AgentRuntimeLike {
@@ -62,10 +83,16 @@ export class SuperskyAgentRuntime implements AgentRuntimeLike {
 				}),
 				model: options.model,
 				messages: options.initialMessages ?? [],
-				thinkingLevel: options.model.reasoning ? "medium" : "off",
+				thinkingLevel: clampThinkingLevel(
+					options.model,
+					options.thinkingLevel ?? "medium",
+				),
 				tools: tools.active,
 			},
 			convertToLlm: convertSuperskyAgentMessagesToLlm,
+			transformContext: async (messages) => {
+				return getVisibleTranscriptMessages(messages);
+			},
 			streamFn: async (model, context, streamOptions) => {
 				const apiKey = await this.options.authStorage.getApiKeyAsync(
 					model.provider,
@@ -82,11 +109,16 @@ export class SuperskyAgentRuntime implements AgentRuntimeLike {
 
 	setModel(model: Model<Api>) {
 		this.agent.state.model = model;
-		if (!model.reasoning) {
-			this.agent.state.thinkingLevel = "off";
-		} else if (this.agent.state.thinkingLevel === "off") {
-			this.agent.state.thinkingLevel = "medium";
-		}
+		const nextLevel = clampThinkingLevel(model, this.agent.state.thinkingLevel);
+		this.agent.state.thinkingLevel =
+			nextLevel === "off" && model.reasoning ? "medium" : nextLevel;
+	}
+
+	setThinkingLevel(level: ThinkingLevel) {
+		this.agent.state.thinkingLevel = clampThinkingLevel(
+			this.agent.state.model,
+			level,
+		);
 	}
 
 	reset() {

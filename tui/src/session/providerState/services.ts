@@ -1,5 +1,6 @@
 import type { AgentRuntimeLike } from "../../agent/runtime";
 import type { AgentMessage } from "../../vendor/pi-agent-core/index.js";
+import type { ThinkingLevel } from "../../vendor/pi-agent-core/types.js";
 import {
 	type AssistantMessage,
 	completeSimple,
@@ -91,6 +92,7 @@ export type SessionServices = {
 		options?: {
 			sessionId: string;
 			initialMessages?: AgentMessage[];
+			thinkingLevel?: ThinkingLevel;
 		},
 	) => AgentRuntimeLike | null;
 	generateSessionTitle?: (input: {

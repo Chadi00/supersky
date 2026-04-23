@@ -5,6 +5,7 @@ import { convertSuperskyAgentMessagesToLlm } from "../agent/bashExecutionTypes";
 import type { AgentRuntimeLike } from "../agent/runtime";
 import { buildSystemPrompt } from "../agent/systemPrompt";
 import { createBuiltInTools } from "../agent/tools";
+import type { EditorPreset } from "../app/editor";
 import type {
 	AuthCredential,
 	AuthStorageLike,
@@ -30,6 +31,7 @@ import type { SettingsManagerLike } from "../session/providerState/settingsManag
 import { createWorkspaceSnapshotStore } from "../session/providerState/workspaceSnapshotStore";
 import type { AgentMessage } from "../vendor/pi-agent-core/index.js";
 import { Agent } from "../vendor/pi-agent-core/index.js";
+import type { ThinkingLevel } from "../vendor/pi-agent-core/types.js";
 import { createAssistantMessageEventStream } from "../vendor/pi-ai/index.js";
 
 type FakeProviderSpec = {
@@ -72,6 +74,7 @@ class FakeAgentRuntime implements AgentRuntimeLike {
 		cwd: string,
 		sessionId: string,
 		initialMessages: AgentMessage[] = [],
+		thinkingLevel: ThinkingLevel = model.reasoning ? "medium" : "off",
 	) {
 		this.cwd = cwd;
 		this.sessionId = sessionId;
@@ -86,7 +89,7 @@ class FakeAgentRuntime implements AgentRuntimeLike {
 				}),
 				model,
 				messages: initialMessages,
-				thinkingLevel: model.reasoning ? "medium" : "off",
+				thinkingLevel,
 				tools: tools.active,
 			},
 			convertToLlm: convertSuperskyAgentMessagesToLlm,
@@ -145,6 +148,10 @@ class FakeAgentRuntime implements AgentRuntimeLike {
 
 	setModel(model: Model<Api>) {
 		this.agent.state.model = model;
+	}
+
+	setThinkingLevel(level: ThinkingLevel) {
+		this.agent.state.thinkingLevel = level;
 	}
 
 	reset() {
@@ -325,6 +332,9 @@ class FakeAuthStorage implements AuthStorageLike {
 class FakeSettingsManager implements SettingsManagerLike {
 	private defaultProvider: string | undefined;
 	private defaultModel: string | undefined;
+	private defaultThinkingLevel: ThinkingLevel | undefined;
+	private defaultEditor: EditorPreset | undefined;
+	private customEditorCommand: string | undefined;
 
 	getDefaultProvider() {
 		return this.defaultProvider;
@@ -334,9 +344,30 @@ class FakeSettingsManager implements SettingsManagerLike {
 		return this.defaultModel;
 	}
 
+	getDefaultThinkingLevel() {
+		return this.defaultThinkingLevel;
+	}
+
+	getDefaultEditor() {
+		return this.defaultEditor;
+	}
+
+	getCustomEditorCommand() {
+		return this.customEditorCommand;
+	}
+
 	setDefaultModelAndProvider(provider: string, modelId: string) {
 		this.defaultProvider = provider;
 		this.defaultModel = modelId;
+	}
+
+	setDefaultThinkingLevel(level: ThinkingLevel) {
+		this.defaultThinkingLevel = level;
+	}
+
+	setDefaultEditor(editor: EditorPreset, customCommand?: string) {
+		this.defaultEditor = editor;
+		this.customEditorCommand = customCommand?.trim() || undefined;
 	}
 }
 
@@ -388,6 +419,7 @@ class FakeSessionStore implements SessionStoreLike {
 					modelId: session.modelId,
 					workspaceRoot: session.workspaceRoot,
 					parentSessionId: session.parentSessionId,
+					thinkingLevel: session.thinkingLevel,
 					revert: session.revert,
 				}),
 			)
@@ -403,6 +435,7 @@ class FakeSessionStore implements SessionStoreLike {
 		title: string;
 		workspaceRoot: string;
 		model: Model<Api> | null;
+		thinkingLevel?: ThinkingLevel;
 		parentSessionId?: string | null;
 		createdAt?: number;
 	}) {
@@ -416,7 +449,9 @@ class FakeSessionStore implements SessionStoreLike {
 			modelId: input.model?.id ?? null,
 			workspaceRoot: input.workspaceRoot,
 			parentSessionId: input.parentSessionId ?? null,
+			thinkingLevel: input.thinkingLevel ?? "medium",
 			revert: null,
+			archivedMessages: [],
 			messages: [],
 		};
 		this.sessions.set(input.id, session);
@@ -429,6 +464,7 @@ class FakeSessionStore implements SessionStoreLike {
 			modelId: session.modelId,
 			workspaceRoot: session.workspaceRoot,
 			parentSessionId: session.parentSessionId,
+			thinkingLevel: session.thinkingLevel,
 			revert: session.revert,
 		};
 	}
@@ -448,10 +484,24 @@ class FakeSessionStore implements SessionStoreLike {
 		session.updatedAt = Date.now();
 	}
 
+	updateSessionThinkingLevel(sessionId: string, thinkingLevel: ThinkingLevel) {
+		const session = this.sessions.get(sessionId);
+		if (!session) return;
+		session.thinkingLevel = thinkingLevel;
+		session.updatedAt = Date.now();
+	}
+
 	setSessionRevert(sessionId: string, revert: SessionRevertState | null) {
 		const session = this.sessions.get(sessionId);
 		if (!session) return;
 		session.revert = revert;
+		session.updatedAt = Date.now();
+	}
+
+	replaceSessionArchivedMessages(sessionId: string, messages: AgentMessage[]) {
+		const session = this.sessions.get(sessionId);
+		if (!session) return;
+		session.archivedMessages = messages;
 		session.updatedAt = Date.now();
 	}
 
@@ -586,6 +636,7 @@ export function createFakeSessionServices(options?: {
 				workspaceRoot,
 				options?.sessionId ?? `fake-session-${Date.now()}`,
 				options?.initialMessages,
+				options?.thinkingLevel,
 			);
 		},
 		generateSessionTitle: options?.generateSessionTitle,

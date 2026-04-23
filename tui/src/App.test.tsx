@@ -1,11 +1,14 @@
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
+import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentRuntimeLike } from "./agent/runtime";
 import * as userShell from "./agent/userShell";
 import * as clipboard from "./app/clipboard";
+import * as editorApp from "./app/editor";
 import { getCommandPickerRowId } from "./session/commandPicker";
+import * as compaction from "./session/compaction";
 import { SIDEBAR_LAYOUT_WIDTH } from "./session/layout";
 import { getUserMessageRowId } from "./session/MessageList";
 import * as browser from "./session/providerState/browser";
@@ -60,6 +63,7 @@ function createDelayedRuntime(sessionId: string): AgentRuntimeLike {
 		setModel(model) {
 			state.model = model as unknown;
 		},
+		setThinkingLevel() {},
 		reset() {
 			state.messages = [];
 			state.streamingMessage = null;
@@ -116,17 +120,25 @@ let openUrlSpy: ReturnType<typeof spyOn<typeof browser, "openUrlInBrowser">>;
 let copyToClipboardSpy: ReturnType<
 	typeof spyOn<typeof clipboard, "copyToClipboard">
 >;
+let launchEditorSpy: ReturnType<
+	typeof spyOn<typeof editorApp, "launchWorkspaceInEditor">
+>;
 
 beforeEach(() => {
 	// Auth tests trigger browser-launch callbacks; stub them so the suite never
 	// leaves real browser windows behind.
 	openUrlSpy = spyOn(browser, "openUrlInBrowser").mockImplementation(() => {});
 	copyToClipboardSpy = spyOn(clipboard, "copyToClipboard").mockResolvedValue();
+	launchEditorSpy = spyOn(
+		editorApp,
+		"launchWorkspaceInEditor",
+	).mockResolvedValue({ ok: true, description: "system default editor" });
 });
 
 afterEach(() => {
 	openUrlSpy.mockRestore();
 	copyToClipboardSpy.mockRestore();
+	launchEditorSpy.mockRestore();
 });
 
 test("renders the supersky TUI shell (new session)", async () => {
@@ -507,7 +519,8 @@ test("typing slash opens the command menu", async () => {
 		expect(frame).toContain("/model");
 		expect(frame).toContain("/settings");
 		expect(frame).toContain("/new");
-		expect(frame).toContain("/exit");
+		expect(frame).toContain("/export");
+		expect(frame).toContain("/copy");
 		expect(frame).not.toContain("/delete");
 	});
 });
@@ -616,7 +629,8 @@ test("hovering a command updates the highlighted selection", async () => {
 
 		const frame = setup.captureCharFrame();
 
-		expect(frame).toContain("Settings screen not implemented yet.");
+		expect(frame).toContain("Settings");
+		expect(frame).toContain("Select a setting to change.");
 		expect(getComposerText(setup)).toBe("");
 	});
 });
@@ -815,6 +829,25 @@ test("selecting a model updates the footer", async () => {
 		const frame = setup.captureCharFrame();
 
 		expect(frame).toContain("gemini-2.5-flash");
+	});
+});
+
+test("submitting /variants opens the thinking-level picker and updates the footer", async () => {
+	await withApp(async (setup) => {
+		await submitText(setup, "/login");
+		await clickRenderable(
+			setup,
+			getCommandPickerRowId("provider", "anthropic"),
+		);
+		await settleScrollLayout(setup);
+
+		await submitText(setup, "/variants");
+		await clickRenderable(setup, getCommandPickerRowId("variants", "high"));
+		await settleScrollLayout(setup);
+
+		const frame = setup.captureCharFrame();
+
+		expect(frame).toContain("claude-opus-4-6 · high");
 	});
 });
 
@@ -1025,6 +1058,134 @@ test("launching with a session id opens that session directly", async () => {
 		sharedServices,
 		{ initialSessionId: sessionId },
 	);
+});
+
+test("submitting /export writes a markdown transcript to the workspace root", async () => {
+	const workspaceRoot = await mkdtemp(join(tmpdir(), "supersky-export-"));
+	const sharedServices = createFakeSessionServices({ workspaceRoot });
+
+	try {
+		await withApp(
+			async (setup) => {
+				await sendMessages(setup, 1);
+				await settleScrollLayout(setup);
+				const sessionId = getCurrentSessionId(sharedServices);
+				if (!sessionId) {
+					throw new Error("Expected an active session to exist");
+				}
+
+				await submitText(setup, "/export");
+				await settleScrollLayout(setup);
+				const exportPath = join(workspaceRoot, `supersky_${sessionId}.md`);
+				expect(existsSync(exportPath)).toBe(false);
+
+				const frameBeforeConfirm = setup.captureCharFrame();
+				expect(frameBeforeConfirm).toContain("Export session?");
+
+				await pressEnter(setup);
+				await settleScrollLayout(setup);
+
+				const content = await readFile(exportPath, "utf8");
+				const frame = setup.captureCharFrame();
+
+				expect(content).toContain(
+					`# ${sharedServices.sessionStore.getSession(sessionId)?.title}`,
+				);
+				expect(content).toContain("## User");
+				expect(content).toContain("## Assistant");
+				expect(frame).toContain("Exported session to");
+				expect(frame).toContain(sessionId);
+			},
+			undefined,
+			undefined,
+			sharedServices,
+		);
+	} finally {
+		await rm(workspaceRoot, { recursive: true, force: true });
+	}
+});
+
+test("cancelling /export confirm dialog does not write a file", async () => {
+	const workspaceRoot = await mkdtemp(
+		join(tmpdir(), "supersky-export-cancel-"),
+	);
+	const sharedServices = createFakeSessionServices({ workspaceRoot });
+
+	try {
+		await withApp(
+			async (setup) => {
+				await sendMessages(setup, 1);
+				await settleScrollLayout(setup);
+				const sessionId = getCurrentSessionId(sharedServices);
+				if (!sessionId) {
+					throw new Error("Expected an active session to exist");
+				}
+
+				await submitText(setup, "/export");
+				await settleScrollLayout(setup);
+
+				const exportPath = join(workspaceRoot, `supersky_${sessionId}.md`);
+				await pressEscape(setup);
+				await settleScrollLayout(setup);
+
+				expect(existsSync(exportPath)).toBe(false);
+			},
+			undefined,
+			undefined,
+			sharedServices,
+		);
+	} finally {
+		await rm(workspaceRoot, { recursive: true, force: true });
+	}
+});
+
+test("submitting /compact replaces the active transcript with a compacted summary", async () => {
+	const compactSpy = spyOn(compaction, "compactSession").mockResolvedValue({
+		summary: "## Goal\n- Ship the feature",
+		archivedMessages: createStoredSessionMessages("old context"),
+		compactedMessages: [
+			compaction.createCompactionSummaryMessage({
+				summary: "## Goal\n- Ship the feature",
+				hiddenMessageCount: 2,
+				archivedMessageCount: 2,
+			}),
+			...createStoredSessionMessages("recent context"),
+		],
+		hiddenMessageCount: 2,
+		archivedMessageCount: 2,
+	});
+
+	try {
+		const sharedServices = createFakeSessionServices();
+		await withApp(
+			async (setup) => {
+				await sendMessages(setup, 1);
+				await settleScrollLayout(setup);
+				await submitText(setup, "/compact");
+				await settleScrollLayout(setup);
+
+				const sessionId = getCurrentSessionId(sharedServices);
+				if (!sessionId) {
+					throw new Error("Expected active session");
+				}
+
+				const frame = setup.captureCharFrame();
+				const stored = sharedServices.sessionStore.getSession(sessionId);
+
+				expect(frame).toContain("Session compacted");
+				expect(frame).toContain("Summarized 2 messages.");
+				expect(stored?.archivedMessages).toHaveLength(1);
+				expect(stored?.messages[0]).toMatchObject({
+					role: "compactionSummary",
+				});
+			},
+			undefined,
+			undefined,
+			sharedServices,
+		);
+	} finally {
+		compactSpy.mockRestore();
+	}
 });
 
 test("the session picker can copy the current session id", async () => {
@@ -1768,22 +1929,71 @@ test("opening the command menu does not move the in-session composer", async () 
 	});
 });
 
-for (const [command, notice] of [
-	["/settings", "Settings screen not implemented yet."],
-] as const) {
-	test(`submitting ${command} shows the stub notice`, async () => {
-		await withApp(async (setup) => {
-			await submitText(setup, command);
+test("submitting /settings opens the settings picker", async () => {
+	await withApp(async (setup) => {
+		await submitText(setup, "/settings");
+		await settleScrollLayout(setup);
+
+		const frame = setup.captureCharFrame();
+
+		expect(frame).toContain("Settings");
+		expect(frame).toContain("Provider");
+		expect(frame).toContain("Model");
+		expect(frame).toContain("Thinking level");
+		expect(frame).toContain("Editor");
+		expect(frame).not.toContain("Assistant");
+		expect(getComposerText(setup)).toBe("");
+	});
+});
+
+test("submitting /copy copies the last assistant message", async () => {
+	await withApp(async (setup) => {
+		await sendMessages(setup, 1);
+		await settleScrollLayout(setup);
+		await submitText(setup, "/copy");
+		await settleScrollLayout(setup);
+
+		expect(copyToClipboardSpy).toHaveBeenCalledWith("Handled request.");
+		expect(setup.captureCharFrame()).toContain(
+			"Last assistant message copied to clipboard.",
+		);
+	});
+});
+
+test("submitting /hotkey opens the hotkeys dialog", async () => {
+	await withApp(async (setup) => {
+		await submitText(setup, "/hotkey");
+		await settleScrollLayout(setup);
+
+		const frame = setup.captureCharFrame();
+
+		expect(frame).toContain("Supersky hotkeys");
+		expect(frame).toContain("Ctrl+N");
+		expect(frame).toContain("Start a new session");
+	});
+});
+
+test("submitting /editor launches the configured editor", async () => {
+	const sharedServices = createFakeSessionServices();
+
+	await withApp(
+		async (setup) => {
+			await submitText(setup, "/editor");
 			await settleScrollLayout(setup);
 
-			const frame = setup.captureCharFrame();
-
-			expect(frame).toContain(notice);
-			expect(frame).not.toContain("Assistant");
-			expect(getComposerText(setup)).toBe("");
-		});
-	});
-}
+			expect(launchEditorSpy).toHaveBeenCalledWith(
+				expect.objectContaining({
+					preset: "system",
+					workspaceRoot: sharedServices.workspaceRoot,
+				}),
+			);
+			expect(setup.captureCharFrame()).toContain("Opened ");
+		},
+		undefined,
+		undefined,
+		sharedServices,
+	);
+});
 
 test("submitting an unknown slash command shows an error notice", async () => {
 	await withApp(async (setup) => {

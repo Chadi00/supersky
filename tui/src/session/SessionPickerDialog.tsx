@@ -268,13 +268,6 @@ export function SessionPickerDialog({
 			return;
 		}
 
-		if (key.name === "escape") {
-			key.preventDefault();
-			key.stopPropagation();
-			onClose();
-			return;
-		}
-
 		if (key.ctrl && key.name === "r") {
 			if (!selectedItem) {
 				return;

@@ -1,10 +1,13 @@
 import { expect, test } from "bun:test";
 
 import {
+	COPY_COMMAND,
+	EDITOR_COMMAND,
 	EXIT_COMMAND,
 	FORK_COMMAND,
 	getMatchingSlashCommands,
 	getSlashMenuQuery,
+	HOTKEY_COMMAND,
 	isExitCommand,
 	isExitShortcut,
 	isNewSessionShortcut,
@@ -14,6 +17,8 @@ import {
 	parseSubmittedSlashCommand,
 	RENAME_COMMAND,
 	SESSIONS_COMMAND,
+	SETTINGS_COMMAND,
+	VARIANTS_COMMAND,
 } from "./commands";
 
 test("normalizes command input before matching", () => {
@@ -48,6 +53,7 @@ test("matches slash commands by prefix before description text", () => {
 	expect(getMatchingSlashCommands("m")[0]?.name).toBe(MODEL_COMMAND);
 	expect(getMatchingSlashCommands("fo")[0]?.name).toBe(FORK_COMMAND);
 	expect(getMatchingSlashCommands("session")[0]?.name).toBe(SESSIONS_COMMAND);
+	expect(getMatchingSlashCommands("copy")[0]?.name).toBe(COPY_COMMAND);
 });
 
 test("supports session aliases and management commands", () => {
@@ -56,6 +62,12 @@ test("supports session aliases and management commands", () => {
 	);
 	expect(parseSubmittedSlashCommand("/rename now")?.command.name).toBe(
 		RENAME_COMMAND,
+	);
+	expect(parseSubmittedSlashCommand("/hotkeys")?.command.name).toBe(
+		HOTKEY_COMMAND,
+	);
+	expect(parseSubmittedSlashCommand("/variant")?.command.name).toBe(
+		VARIANTS_COMMAND,
 	);
 	expect(parseSubmittedSlashCommand("/delete")).toBeNull();
 });
@@ -67,6 +79,12 @@ test("parses a submitted slash command from the first token", () => {
 	expect(parseSubmittedSlashCommand("/fork")?.command.name).toBe(FORK_COMMAND);
 	expect(parseSubmittedSlashCommand("/new later")?.command.name).toBe(
 		NEW_SESSION_COMMAND,
+	);
+	expect(parseSubmittedSlashCommand("/settings")?.command.name).toBe(
+		SETTINGS_COMMAND,
+	);
+	expect(parseSubmittedSlashCommand("/editor")?.command.name).toBe(
+		EDITOR_COMMAND,
 	);
 	expect(parseSubmittedSlashCommand("hello")).toBeNull();
 });

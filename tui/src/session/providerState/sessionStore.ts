@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { AgentMessage } from "../../vendor/pi-agent-core/index.js";
+import type { ThinkingLevel } from "../../vendor/pi-agent-core/types.js";
 import { getSessionsDbPath } from "./paths";
 import type { Api, Model } from "./piSource";
 
@@ -14,6 +15,8 @@ type SessionRow = {
 	model_id: string | null;
 	workspace_root: string;
 	parent_session_id: string | null;
+	thinking_level: ThinkingLevel;
+	archived_messages_json: string | null;
 	revert_message_timestamp: number | null;
 	revert_snapshot_id: string | null;
 	revert_diff: string | null;
@@ -46,10 +49,12 @@ export type SessionSummary = {
 	modelId: string | null;
 	workspaceRoot: string;
 	parentSessionId: string | null;
+	thinkingLevel: ThinkingLevel;
 	revert: SessionRevertState | null;
 };
 
 export type StoredSession = SessionSummary & {
+	archivedMessages: AgentMessage[];
 	messages: AgentMessage[];
 };
 
@@ -61,12 +66,21 @@ export interface SessionStoreLike {
 		title: string;
 		workspaceRoot: string;
 		model: Model<Api> | null;
+		thinkingLevel?: ThinkingLevel;
 		parentSessionId?: string | null;
 		createdAt?: number;
 	}): SessionSummary;
 	updateSessionTitle(sessionId: string, title: string): void;
 	updateSessionModel(sessionId: string, model: Model<Api> | null): void;
+	updateSessionThinkingLevel(
+		sessionId: string,
+		thinkingLevel: ThinkingLevel,
+	): void;
 	setSessionRevert(sessionId: string, revert: SessionRevertState | null): void;
+	replaceSessionArchivedMessages(
+		sessionId: string,
+		messages: AgentMessage[],
+	): void;
 	replaceSessionMessages(sessionId: string, messages: AgentMessage[]): void;
 	listSessionPatches(sessionId: string): SessionPatch[];
 	replaceSessionPatches(sessionId: string, patches: SessionPatch[]): void;
@@ -104,6 +118,7 @@ function mapSessionRow(row: SessionRow): SessionSummary {
 		modelId: row.model_id,
 		workspaceRoot: row.workspace_root,
 		parentSessionId: row.parent_session_id,
+		thinkingLevel: row.thinking_level,
 		revert: mapRevert(row),
 	};
 }
@@ -121,6 +136,19 @@ function parsePatchFiles(filesJson: string) {
 		// Ignore malformed rows and treat them as empty.
 	}
 	return [] as string[];
+}
+
+function parseArchivedMessages(messagesJson: string | null) {
+	if (!messagesJson) {
+		return [] as AgentMessage[];
+	}
+
+	try {
+		const parsed = JSON.parse(messagesJson) as unknown;
+		return Array.isArray(parsed) ? (parsed as AgentMessage[]) : [];
+	} catch {
+		return [] as AgentMessage[];
+	}
 }
 
 export class SessionStore implements SessionStoreLike {
@@ -149,6 +177,8 @@ export class SessionStore implements SessionStoreLike {
 				workspace_root TEXT NOT NULL,
 				head_snapshot_id TEXT,
 				parent_session_id TEXT,
+				thinking_level TEXT NOT NULL DEFAULT 'medium',
+				archived_messages_json TEXT,
 				revert_message_timestamp INTEGER,
 				revert_snapshot_id TEXT,
 				revert_diff TEXT
@@ -192,6 +222,14 @@ export class SessionStore implements SessionStoreLike {
 			"ALTER TABLE session ADD COLUMN parent_session_id TEXT",
 		);
 		ensureColumn(
+			"thinking_level",
+			"ALTER TABLE session ADD COLUMN thinking_level TEXT NOT NULL DEFAULT 'medium'",
+		);
+		ensureColumn(
+			"archived_messages_json",
+			"ALTER TABLE session ADD COLUMN archived_messages_json TEXT",
+		);
+		ensureColumn(
 			"revert_message_timestamp",
 			"ALTER TABLE session ADD COLUMN revert_message_timestamp INTEGER",
 		);
@@ -209,7 +247,8 @@ export class SessionStore implements SessionStoreLike {
 		const rows = this.db
 			.query(
 				`SELECT id, title, created_at, updated_at, model_provider, model_id,
-				        workspace_root, parent_session_id, revert_message_timestamp,
+				        workspace_root, parent_session_id, thinking_level,
+				        archived_messages_json, revert_message_timestamp,
 				        revert_snapshot_id, revert_diff
 				 FROM session
 				 ORDER BY updated_at DESC
@@ -223,7 +262,8 @@ export class SessionStore implements SessionStoreLike {
 		const row = this.db
 			.query(
 				`SELECT id, title, created_at, updated_at, model_provider, model_id,
-				        workspace_root, parent_session_id, revert_message_timestamp,
+				        workspace_root, parent_session_id, thinking_level,
+				        archived_messages_json, revert_message_timestamp,
 				        revert_snapshot_id, revert_diff
 				 FROM session
 				 WHERE id = ?`,
@@ -237,6 +277,7 @@ export class SessionStore implements SessionStoreLike {
 			.all(sessionId) as Array<{ payload: string }>;
 		return {
 			...mapSessionRow(row),
+			archivedMessages: parseArchivedMessages(row.archived_messages_json),
 			messages: messagesRows.map(
 				(entry) => JSON.parse(entry.payload) as AgentMessage,
 			),
@@ -248,6 +289,7 @@ export class SessionStore implements SessionStoreLike {
 		title: string;
 		workspaceRoot: string;
 		model: Model<Api> | null;
+		thinkingLevel?: ThinkingLevel;
 		parentSessionId?: string | null;
 		createdAt?: number;
 	}): SessionSummary {
@@ -256,9 +298,10 @@ export class SessionStore implements SessionStoreLike {
 			.query(
 				`INSERT INTO session (
 					id, title, created_at, updated_at, model_provider, model_id,
-					workspace_root, parent_session_id, revert_message_timestamp,
+					workspace_root, parent_session_id, thinking_level,
+					archived_messages_json, revert_message_timestamp,
 					revert_snapshot_id, revert_diff
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)`,
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL)`,
 			)
 			.run(
 				input.id,
@@ -269,6 +312,7 @@ export class SessionStore implements SessionStoreLike {
 				input.model?.id ?? null,
 				input.workspaceRoot,
 				input.parentSessionId ?? null,
+				input.thinkingLevel ?? "medium",
 			);
 		return {
 			id: input.id,
@@ -279,6 +323,7 @@ export class SessionStore implements SessionStoreLike {
 			modelId: input.model?.id ?? null,
 			workspaceRoot: input.workspaceRoot,
 			parentSessionId: input.parentSessionId ?? null,
+			thinkingLevel: input.thinkingLevel ?? "medium",
 			revert: null,
 		};
 	}
@@ -297,6 +342,14 @@ export class SessionStore implements SessionStoreLike {
 			.run(model?.provider ?? null, model?.id ?? null, Date.now(), sessionId);
 	}
 
+	updateSessionThinkingLevel(sessionId: string, thinkingLevel: ThinkingLevel) {
+		this.db
+			.query(
+				"UPDATE session SET thinking_level = ?, updated_at = ? WHERE id = ?",
+			)
+			.run(thinkingLevel, Date.now(), sessionId);
+	}
+
 	setSessionRevert(sessionId: string, revert: SessionRevertState | null) {
 		this.db
 			.query(
@@ -311,6 +364,14 @@ export class SessionStore implements SessionStoreLike {
 				Date.now(),
 				sessionId,
 			);
+	}
+
+	replaceSessionArchivedMessages(sessionId: string, messages: AgentMessage[]) {
+		this.db
+			.query(
+				"UPDATE session SET archived_messages_json = ?, updated_at = ? WHERE id = ?",
+			)
+			.run(JSON.stringify(messages), Date.now(), sessionId);
 	}
 
 	replaceSessionMessages(sessionId: string, messages: AgentMessage[]) {

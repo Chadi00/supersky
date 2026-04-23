@@ -8,19 +8,35 @@ import {
 	useState,
 } from "react";
 import type { BashExecutionMessage } from "../agent/bashExecutionTypes";
-import { type AgentRuntimeLike, SuperskyAgentRuntime } from "../agent/runtime";
+import {
+	type AgentRuntimeLike,
+	clampThinkingLevel,
+	SuperskyAgentRuntime,
+} from "../agent/runtime";
 import { executeUserShellCommand } from "../agent/userShell";
 import { copyToClipboard } from "../app/clipboard";
+import {
+	type EditorPreset,
+	getAvailableEditorOptions,
+	launchWorkspaceInEditor,
+} from "../app/editor";
 import { destroyRendererAndExit } from "../shared/lifecycle";
 import type {
 	AgentEvent,
 	AgentMessage,
+	ThinkingLevel,
 } from "../vendor/pi-agent-core/index.js";
 import type { UserMessage } from "../vendor/pi-ai/index.js";
+import { supportsXhigh } from "../vendor/pi-ai/models.js";
 import type { CommandPickerState } from "./commandPicker";
 import {
+	COMPACT_COMMAND,
+	COPY_COMMAND,
+	EDITOR_COMMAND,
 	EXIT_COMMAND,
+	EXPORT_COMMAND,
 	FORK_COMMAND,
+	HOTKEY_COMMAND,
 	isExitCommand,
 	isExitShortcut,
 	isNewSessionShortcut,
@@ -32,7 +48,13 @@ import {
 	RENAME_COMMAND,
 	SESSIONS_COMMAND,
 	SETTINGS_COMMAND,
+	VARIANTS_COMMAND,
 } from "./commands";
+import {
+	buildFullTranscriptMessages,
+	compactSession,
+	getVisibleTranscriptMessages,
+} from "./compaction";
 import { buildSessionSidebarUsageLines } from "./contextUsageDisplay";
 import type { LoginDialogLineTone, LoginDialogState } from "./LoginDialog";
 import { openUrlInBrowser } from "./providerState/browser";
@@ -67,6 +89,11 @@ import {
 	getVisibleSessionMessages,
 	unrevertSession,
 } from "./sessionRevert";
+import type { TextInputDialogState } from "./TextInputDialog";
+import {
+	messageToTranscriptMarkdown,
+	transcriptHeaderMarkdown,
+} from "./transcript";
 import {
 	createInitialSessionState,
 	getSubmittedComposerHistory,
@@ -77,7 +104,12 @@ import {
 type ActivePickerState =
 	| { kind: "provider"; mode: "login" | "logout" }
 	| { kind: "model"; query: string }
-	| { kind: "sessions" };
+	| { kind: "sessions" }
+	| { kind: "settings" }
+	| { kind: "variants" }
+	| { kind: "editor" };
+
+type SettingsPickerItemId = "provider" | "model" | "variants" | "editor";
 
 type PendingLoginInput = {
 	resolve: (value: string) => void;
@@ -254,9 +286,15 @@ export function useSessionController(
 	const [showWelcomeScreen, setShowWelcomeScreen] = useState(true);
 	const [sessionSidebarModifiedFiles, setSessionSidebarModifiedFiles] =
 		useState<SessionModifiedFile[]>([]);
-	const [activePicker, setActivePicker] = useState<ActivePickerState | null>(
-		null,
-	);
+	const [pickerStack, setPickerStack] = useState<ActivePickerState[]>([]);
+	const activePicker =
+		pickerStack.length > 0 ? pickerStack[pickerStack.length - 1]! : null;
+	const [showHotkeysDialog, setShowHotkeysDialog] = useState(false);
+	const [exportConfirmDialog, setExportConfirmDialog] = useState<{
+		exportPath: string;
+	} | null>(null);
+	const [textInputDialogState, setTextInputDialogState] =
+		useState<TextInputDialogState | null>(null);
 	const [pendingDeleteSessionId, setPendingDeleteSessionId] = useState<
 		string | null
 	>(null);
@@ -277,6 +315,15 @@ export function useSessionController(
 			}) ?? null
 		);
 	});
+	const [activeThinkingLevel, setActiveThinkingLevel] = useState<ThinkingLevel>(
+		() => {
+			const defaultThinkingLevel =
+				services.settingsManager.getDefaultThinkingLevel() ?? "medium";
+			return activeModel
+				? clampThinkingLevel(activeModel, defaultThinkingLevel)
+				: defaultThinkingLevel;
+		},
+	);
 	const [state, dispatch] = useReducer(
 		sessionReducer,
 		createInitialSessionState(),
@@ -284,13 +331,30 @@ export function useSessionController(
 
 	const activePickerRef = useRef<ActivePickerState | null>(null);
 	const activeModelRef = useRef<Model<Api> | null>(activeModel);
+	const activeThinkingLevelRef = useRef<ThinkingLevel>(activeThinkingLevel);
 	const loginDialogStateRef = useRef<LoginDialogState | null>(loginDialogState);
 	const activeSessionIdRef = useRef<string | null>(activeSessionId);
 
 	activePickerRef.current = activePicker;
 	activeModelRef.current = activeModel;
+	activeThinkingLevelRef.current = activeThinkingLevel;
 	loginDialogStateRef.current = loginDialogState;
 	activeSessionIdRef.current = activeSessionId;
+
+	useEffect(() => {
+		const top = pickerStack[pickerStack.length - 1];
+		if (top?.kind === "sessions") {
+			return;
+		}
+		setPendingDeleteSessionId(null);
+	}, [pickerStack]);
+
+	const copyLastAssistantMessageRef = useRef<() => Promise<void>>(() => {
+		throw new Error("copyLastAssistantMessage called before initialization");
+	});
+	const compactCurrentSessionRef = useRef<() => Promise<void>>(() => {
+		throw new Error("compactCurrentSession called before initialization");
+	});
 
 	const syncRuntimeState = useCallback(() => {
 		const runtime = runtimeRef.current;
@@ -347,6 +411,7 @@ export function useSessionController(
 		(
 			sessionId: string,
 			model: Model<Api> | null,
+			thinkingLevel: ThinkingLevel,
 			revert: SessionRevertState | null,
 			initialMessages?: AgentMessage[],
 		) => {
@@ -354,6 +419,7 @@ export function useSessionController(
 				services.createRuntime?.(model, {
 					sessionId,
 					initialMessages,
+					thinkingLevel,
 				}) ??
 				(model
 					? new SuperskyAgentRuntime({
@@ -362,6 +428,7 @@ export function useSessionController(
 							model,
 							sessionId,
 							initialMessages: initialMessages ?? [],
+							thinkingLevel,
 						})
 					: null);
 			if (!runtime) {
@@ -477,6 +544,8 @@ export function useSessionController(
 			if (!entry) return null;
 			setMessageActionTarget(null);
 			runtimeRef.current = entry.runtime;
+			setActiveModel(entry.runtime.agent.state.model);
+			setActiveThinkingLevel(entry.runtime.agent.state.thinkingLevel);
 			setActiveSessionId(sessionId);
 			setShowWelcomeScreen(false);
 			services.sessionStore.setLastActiveSessionId(sessionId);
@@ -491,13 +560,21 @@ export function useSessionController(
 			model: Model<Api> | null,
 			options?: {
 				initialMessages?: AgentMessage[];
+				thinkingLevel?: ThinkingLevel;
 				parentSessionId?: string | null;
 			},
 		) => {
 			const sessionId = crypto.randomUUID();
+			const thinkingLevel = model
+				? clampThinkingLevel(
+						model,
+						options?.thinkingLevel ?? activeThinkingLevelRef.current,
+					)
+				: "off";
 			const entry = buildSessionRuntime(
 				sessionId,
 				model,
+				thinkingLevel,
 				null,
 				options?.initialMessages,
 			);
@@ -509,6 +586,7 @@ export function useSessionController(
 				title: "New session",
 				workspaceRoot: services.workspaceRoot,
 				model,
+				thinkingLevel,
 				parentSessionId: options?.parentSessionId,
 			});
 			if (options?.initialMessages) {
@@ -528,6 +606,7 @@ export function useSessionController(
 			if (runtimeRef.current) {
 				if (model) {
 					runtimeRef.current.setModel(model);
+					runtimeRef.current.setThinkingLevel(activeThinkingLevelRef.current);
 				}
 				return runtimeRef.current;
 			}
@@ -585,6 +664,7 @@ export function useSessionController(
 			const entry = buildSessionRuntime(
 				target.id,
 				storedModel ?? fallbackModel,
+				stored?.thinkingLevel ?? target.thinkingLevel,
 				stored?.revert ?? target.revert,
 				stored?.messages,
 			);
@@ -657,9 +737,24 @@ export function useSessionController(
 		});
 	}, []);
 
-	const closeActivePicker = useCallback(() => {
-		setActivePicker(null);
-		setPendingDeleteSessionId(null);
+	const popPickerStack = useCallback(() => {
+		setPickerStack((stack) =>
+			stack.length === 0 ? stack : stack.slice(0, -1),
+		);
+		setDismissComposerMenuToken((currentToken) => currentToken + 1);
+	}, []);
+
+	const clearPickerStack = useCallback(() => {
+		setPickerStack([]);
+	}, []);
+
+	const openSettingsPicker = useCallback(() => {
+		setCommandNotice(null);
+		setPickerStack([{ kind: "settings" }]);
+	}, []);
+
+	const closeHotkeysDialog = useCallback(() => {
+		setShowHotkeysDialog(false);
 	}, []);
 
 	const cancelLoginDialog = useCallback(() => {
@@ -713,7 +808,7 @@ export function useSessionController(
 			setSessionRenameDialogState(null);
 			if (restoreSessionsDialog) {
 				setPendingDeleteSessionId(null);
-				setActivePicker({ kind: "sessions" });
+				setPickerStack([{ kind: "sessions" }]);
 			}
 		},
 		[],
@@ -735,6 +830,162 @@ export function useSessionController(
 		},
 		[services],
 	);
+
+	const updateSessionThinkingLevel = useCallback(
+		(sessionId: string, thinkingLevel: ThinkingLevel) => {
+			services.sessionStore.updateSessionThinkingLevel(
+				sessionId,
+				thinkingLevel,
+			);
+		},
+		[services],
+	);
+
+	const applyThinkingLevel = useCallback(
+		(thinkingLevel: ThinkingLevel) => {
+			const model = activeModelRef.current;
+			const effectiveThinkingLevel = model
+				? clampThinkingLevel(model, thinkingLevel)
+				: thinkingLevel;
+			const sessionId = activeSessionIdRef.current;
+
+			setActiveThinkingLevel(effectiveThinkingLevel);
+			services.settingsManager.setDefaultThinkingLevel(effectiveThinkingLevel);
+
+			if (sessionId) {
+				const entry = sessionsRef.current.get(sessionId);
+				entry?.runtime.setThinkingLevel(effectiveThinkingLevel);
+				updateSessionThinkingLevel(sessionId, effectiveThinkingLevel);
+			}
+
+			setPickerStack([]);
+			syncRuntimeState();
+		},
+		[services, syncRuntimeState, updateSessionThinkingLevel],
+	);
+
+	const closeTextInputDialog = useCallback(() => {
+		setTextInputDialogState(null);
+	}, []);
+
+	const setTextInputDialogValue = useCallback((value: string) => {
+		setTextInputDialogState((currentState) =>
+			currentState
+				? {
+						...currentState,
+						value,
+					}
+				: currentState,
+		);
+	}, []);
+
+	const openCustomEditorDialog = useCallback(() => {
+		setPickerStack([]);
+		setTextInputDialogState({
+			title: "Custom editor command",
+			helperText:
+				"Press Enter to save. Use {path} for the workspace path, or leave it out to append the path automatically.",
+			placeholder: "code {path}",
+			value: services.settingsManager.getCustomEditorCommand() ?? "",
+		});
+	}, [services]);
+
+	const submitCustomEditorDialog = useCallback(() => {
+		const command = textInputDialogState?.value.trim();
+		if (!command) {
+			setCommandNotice("Enter a custom editor command first.");
+			return;
+		}
+
+		services.settingsManager.setDefaultEditor("custom", command);
+		setTextInputDialogState(null);
+		setCommandNotice("Default editor updated.");
+	}, [services, textInputDialogState?.value]);
+
+	const openProjectInEditor = useCallback(async () => {
+		const preset = services.settingsManager.getDefaultEditor() ?? "system";
+		const launchResult = await launchWorkspaceInEditor({
+			preset,
+			customCommand: services.settingsManager.getCustomEditorCommand(),
+			workspaceRoot: services.workspaceRoot,
+			renderer,
+		});
+
+		if (!launchResult.ok && preset !== "system") {
+			const fallbackResult = await launchWorkspaceInEditor({
+				preset: "system",
+				workspaceRoot: services.workspaceRoot,
+				renderer,
+			});
+			if (fallbackResult.ok) {
+				setCommandNotice(
+					`${launchResult.error} Opened the project with the system default editor instead.`,
+				);
+				return;
+			}
+		}
+
+		setCommandNotice(
+			launchResult.ok
+				? `Opened ${services.workspaceRoot} in ${launchResult.description}.`
+				: launchResult.error,
+		);
+	}, [renderer, services]);
+
+	const exportSessionTranscript = useCallback(async () => {
+		const sessionId = activeSessionIdRef.current;
+		if (!sessionId) {
+			setCommandNotice("No active session to export.");
+			return;
+		}
+
+		const stored = services.sessionStore.getSession(sessionId);
+		if (!stored) {
+			setCommandNotice("Unable to load the active session for export.");
+			return;
+		}
+
+		const modelLabel =
+			stored.modelProvider && stored.modelId
+				? `${stored.modelProvider}/${stored.modelId}`
+				: null;
+		const transcriptMessages = buildFullTranscriptMessages({
+			archivedMessages: stored.archivedMessages,
+			messages: stored.messages,
+		});
+		const markdown = [
+			transcriptHeaderMarkdown({
+				title: stored.title,
+				sessionId: stored.id,
+				workspaceRoot: stored.workspaceRoot,
+				createdAt: stored.createdAt,
+				updatedAt: stored.updatedAt,
+				modelLabel,
+				thinkingLevel: stored.thinkingLevel,
+			}),
+			...transcriptMessages
+				.map((message) => messageToTranscriptMarkdown(message))
+				.filter(Boolean)
+				.map((block) => `${block}\n\n---`),
+		]
+			.filter(Boolean)
+			.join("\n\n");
+
+		const exportPath = `${services.workspaceRoot}/supersky_${sessionId}.md`;
+		await Bun.write(exportPath, `${markdown.trim()}\n`);
+		setCommandNotice(`Exported session to ${exportPath}.`);
+	}, [services]);
+
+	const cancelExportConfirmDialog = useCallback(() => {
+		setExportConfirmDialog(null);
+	}, []);
+
+	const confirmExportFromDialog = useCallback(() => {
+		setExportConfirmDialog(null);
+		void exportSessionTranscript().catch((error: unknown) => {
+			setCommandNotice(error instanceof Error ? error.message : String(error));
+		});
+	}, [exportSessionTranscript]);
 
 	const maybeAutoRenameSession = useCallback(
 		(sessionId: string, model: Model<Api> | null, firstMessage: string) => {
@@ -1011,17 +1262,24 @@ export function useSessionController(
 				model.provider,
 				model.id,
 			);
+			const nextThinkingLevel = clampThinkingLevel(
+				model,
+				activeThinkingLevelRef.current,
+			);
 			const sessionId = activeSessionIdRef.current;
 			if (sessionId) {
 				const entry = sessionsRef.current.get(sessionId);
 				entry?.runtime.setModel(model);
+				entry?.runtime.setThinkingLevel(nextThinkingLevel);
 				services.sessionStore.updateSessionModel(sessionId, model);
+				updateSessionThinkingLevel(sessionId, nextThinkingLevel);
 			}
 			setActiveModel(model);
-			setActivePicker(null);
+			setActiveThinkingLevel(nextThinkingLevel);
+			setPickerStack([]);
 			syncRuntimeState();
 		},
-		[services, syncRuntimeState],
+		[services, syncRuntimeState, updateSessionThinkingLevel],
 	);
 
 	const exitSession = useCallback(() => {
@@ -1031,7 +1289,7 @@ export function useSessionController(
 
 	const resetSession = useCallback(() => {
 		setCommandNotice(null);
-		setActivePicker(null);
+		setPickerStack([]);
 		setMessageActionTarget(null);
 		runtimeRef.current = null;
 		setActiveSessionId(null);
@@ -1087,6 +1345,7 @@ export function useSessionController(
 							buildSessionRuntime(
 								fallback.id,
 								model,
+								stored?.thinkingLevel ?? fallback.thinkingLevel,
 								stored?.revert ?? fallback.revert,
 								stored?.messages,
 							);
@@ -1144,7 +1403,7 @@ export function useSessionController(
 			const previousModel = activeModelRef.current;
 			loginAbortControllerRef.current = new AbortController();
 			pendingLoginInputRef.current = null;
-			setActivePicker(null);
+			setPickerStack([]);
 			setCommandNotice(null);
 			setLoginDialogState({
 				providerId,
@@ -1332,13 +1591,20 @@ export function useSessionController(
 				setActiveModel(fallbackModel);
 				if (fallbackModel) {
 					runtimeRef.current?.setModel(fallbackModel);
+					const nextThinkingLevel = clampThinkingLevel(
+						fallbackModel,
+						activeThinkingLevelRef.current,
+					);
+					runtimeRef.current?.setThinkingLevel(nextThinkingLevel);
+					setActiveThinkingLevel(nextThinkingLevel);
 				} else {
 					runtimeRef.current?.abort();
 					runtimeRef.current = null;
+					setActiveThinkingLevel("medium");
 					syncRuntimeState();
 				}
 			}
-			setActivePicker(null);
+			setPickerStack([]);
 			setCommandNotice(`Logged out of ${providerName}`);
 		},
 		[services, syncRuntimeState],
@@ -1394,7 +1660,7 @@ export function useSessionController(
 				}
 
 				if (slashCommand.command.name === LOGIN_COMMAND) {
-					setActivePicker({ kind: "provider", mode: "login" });
+					setPickerStack([{ kind: "provider", mode: "login" }]);
 					return;
 				}
 
@@ -1410,7 +1676,7 @@ export function useSessionController(
 						return;
 					}
 
-					setActivePicker({ kind: "provider", mode: "logout" });
+					setPickerStack([{ kind: "provider", mode: "logout" }]);
 					return;
 				}
 
@@ -1424,12 +1690,12 @@ export function useSessionController(
 						return;
 					}
 
-					setActivePicker({ kind: "model", query: slashCommand.argumentText });
+					setPickerStack([{ kind: "model", query: slashCommand.argumentText }]);
 					return;
 				}
 
 				if (slashCommand.command.name === SESSIONS_COMMAND) {
-					setActivePicker({ kind: "sessions" });
+					setPickerStack([{ kind: "sessions" }]);
 					return;
 				}
 
@@ -1500,8 +1766,63 @@ export function useSessionController(
 					return;
 				}
 
+				if (slashCommand.command.name === EXPORT_COMMAND) {
+					const sessionId = activeSessionIdRef.current;
+					if (!sessionId) {
+						setCommandNotice("No active session to export.");
+						return;
+					}
+
+					const stored = services.sessionStore.getSession(sessionId);
+					if (!stored) {
+						setCommandNotice("Unable to load the active session for export.");
+						return;
+					}
+
+					const exportPath = `${services.workspaceRoot}/supersky_${sessionId}.md`;
+					setExportConfirmDialog({ exportPath });
+					return;
+				}
+
+				if (slashCommand.command.name === COPY_COMMAND) {
+					void copyLastAssistantMessageRef.current().catch((error: unknown) => {
+						setCommandNotice(
+							error instanceof Error ? error.message : String(error),
+						);
+					});
+					return;
+				}
+
+				if (slashCommand.command.name === HOTKEY_COMMAND) {
+					setShowHotkeysDialog(true);
+					return;
+				}
+
+				if (slashCommand.command.name === VARIANTS_COMMAND) {
+					setPickerStack([{ kind: "variants" }]);
+					return;
+				}
+
+				if (slashCommand.command.name === COMPACT_COMMAND) {
+					void compactCurrentSessionRef.current().catch((error: unknown) => {
+						setCommandNotice(
+							error instanceof Error ? error.message : String(error),
+						);
+					});
+					return;
+				}
+
+				if (slashCommand.command.name === EDITOR_COMMAND) {
+					void openProjectInEditor().catch((error: unknown) => {
+						setCommandNotice(
+							error instanceof Error ? error.message : String(error),
+						);
+					});
+					return;
+				}
+
 				if (slashCommand.command.name === SETTINGS_COMMAND) {
-					setCommandNotice("Settings screen not implemented yet.");
+					openSettingsPicker();
 					return;
 				}
 			}
@@ -1676,7 +1997,9 @@ export function useSessionController(
 			findUserMessageIndex,
 			forkSessionAtMessage,
 			maybeAutoRenameSession,
+			openProjectInEditor,
 			openRenameDialog,
+			openSettingsPicker,
 			pruneUnreferencedSnapshots,
 			resetSession,
 			selectModel,
@@ -1706,10 +2029,14 @@ export function useSessionController(
 					return;
 				}
 
+				const runtime = runtimeRef.current;
+				if (runtime?.agent.state.isStreaming) {
+					runtime.agent.abort();
+					return;
+				}
+
 				if (activePickerRef.current) {
-					setActivePicker(null);
-					setPendingDeleteSessionId(null);
-					setDismissComposerMenuToken((currentToken) => currentToken + 1);
+					popPickerStack();
 					return;
 				}
 
@@ -1736,7 +2063,7 @@ export function useSessionController(
 				resetSession();
 			}
 		},
-		[cancelLoginDialog, exitSession, resetSession],
+		[cancelLoginDialog, exitSession, popPickerStack, resetSession],
 	);
 
 	useKeyboard(handleKeyboardInput);
@@ -1749,6 +2076,93 @@ export function useSessionController(
 		() => getVisibleSessionMessages(state.messages, activeSessionRevert),
 		[activeSessionRevert, state.messages],
 	);
+	const copyLastAssistantMessage = useCallback(async () => {
+		for (let index = visibleMessages.length - 1; index >= 0; index -= 1) {
+			const message = visibleMessages[index];
+			if (!message || message.role !== "assistant") {
+				continue;
+			}
+
+			const text = message.content
+				.filter((part) => part.type === "text")
+				.map((part) => part.text)
+				.join("\n")
+				.trim();
+			if (!text) {
+				continue;
+			}
+
+			await copyToClipboard(text);
+			setCommandNotice("Last assistant message copied to clipboard.");
+			return;
+		}
+
+		setCommandNotice("No assistant message to copy yet.");
+	}, [visibleMessages]);
+	copyLastAssistantMessageRef.current = copyLastAssistantMessage;
+	const compactCurrentSession = useCallback(async () => {
+		const sessionId = activeSessionIdRef.current;
+		const entry = sessionId ? sessionsRef.current.get(sessionId) : null;
+		const model = activeModelRef.current;
+		if (!sessionId || !entry) {
+			setCommandNotice("No active session to compact.");
+			return;
+		}
+		if (!model) {
+			setCommandNotice("No active model selected for compaction.");
+			return;
+		}
+		if (entry.revert) {
+			setCommandNotice("Clear the current revert state before compacting.");
+			return;
+		}
+		if (state.isStreaming || entry.composerShellAbort) {
+			setCommandNotice(
+				"Wait for the active session to finish before compacting.",
+			);
+			return;
+		}
+
+		const stored = services.sessionStore.getSession(sessionId);
+		if (!stored) {
+			setCommandNotice("Unable to load the active session for compaction.");
+			return;
+		}
+
+		const result = await compactSession({
+			model,
+			authStorage: services.authStorage,
+			sessionId,
+			visibleMessages: getVisibleTranscriptMessages(visibleMessages),
+			archivedMessages: stored.archivedMessages,
+			thinkingLevel: activeThinkingLevelRef.current,
+		});
+		if (!result) {
+			setCommandNotice("Session is already compact enough.");
+			return;
+		}
+
+		entry.pendingBashMessages = [];
+		entry.pendingTurnSnapshotId = null;
+		entry.toolExecutions.clear();
+		entry.runtime.reset();
+		entry.runtime.setModel(model);
+		entry.runtime.setThinkingLevel(activeThinkingLevelRef.current);
+		entry.runtime.agent.state.messages = result.compactedMessages.slice();
+		services.sessionStore.replaceSessionArchivedMessages(
+			sessionId,
+			result.archivedMessages,
+		);
+		services.sessionStore.replaceSessionMessages(
+			sessionId,
+			result.compactedMessages,
+		);
+		syncRuntimeState();
+		setCommandNotice(
+			`Compacted session. Summarized ${result.hiddenMessageCount} message${result.hiddenMessageCount === 1 ? "" : "s"}.`,
+		);
+	}, [services, state.isStreaming, syncRuntimeState, visibleMessages]);
+	compactCurrentSessionRef.current = compactCurrentSession;
 	const revertedUserMessages = useMemo(
 		() => getRevertedUserMessages(state.messages, activeSessionRevert),
 		[activeSessionRevert, state.messages],
@@ -1886,6 +2300,95 @@ export function useSessionController(
 			};
 		}
 
+		if (activePicker.kind === "settings") {
+			return {
+				kind: "settings",
+				title: "Settings",
+				helperText: "Select a setting to change.",
+				emptyText: "No settings available.",
+				items: [
+					{
+						id: "provider",
+						label: "Provider",
+						meta: activeModel?.provider ?? "Not selected",
+					},
+					{
+						id: "model",
+						label: "Model",
+						meta: activeModel?.id ?? "Not selected",
+					},
+					{
+						id: "variants",
+						label: "Thinking level",
+						meta: activeThinkingLevel,
+					},
+					{
+						id: "editor",
+						label: "Editor",
+						meta:
+							services.settingsManager.getDefaultEditor() === "custom"
+								? (services.settingsManager.getCustomEditorCommand() ??
+									"Custom")
+								: (services.settingsManager.getDefaultEditor() ?? "system"),
+					},
+				],
+			};
+		}
+
+		if (activePicker.kind === "variants") {
+			const variantItems: ThinkingLevel[] = activeModel?.reasoning
+				? supportsXhigh(activeModel)
+					? ["off", "minimal", "low", "medium", "high", "xhigh"]
+					: ["off", "minimal", "low", "medium", "high"]
+				: ["off"];
+
+			return {
+				kind: "variants",
+				title: "Thinking level",
+				helperText: activeModel?.reasoning
+					? "Select the reasoning depth for future turns."
+					: "The active model does not support reasoning.",
+				emptyText: "No thinking levels available.",
+				selectedItemId: activeThinkingLevel,
+				items: variantItems.map((level) => ({
+					id: level,
+					label: level,
+					meta:
+						level === "off"
+							? "No reasoning"
+							: level === "minimal"
+								? "Very brief"
+								: level === "low"
+									? "Light"
+									: level === "medium"
+										? "Balanced"
+										: level === "high"
+											? "Deep"
+											: "Maximum",
+				})),
+			};
+		}
+
+		if (activePicker.kind === "editor") {
+			const defaultEditor =
+				services.settingsManager.getDefaultEditor() ?? "system";
+			return {
+				kind: "editor",
+				title: "Default editor",
+				helperText: "Select what /editor should launch.",
+				emptyText: "No editors detected.",
+				selectedItemId: defaultEditor,
+				items: getAvailableEditorOptions(
+					defaultEditor,
+					services.settingsManager.getCustomEditorCommand(),
+				),
+			};
+		}
+
+		if (activePicker.kind !== "model") {
+			return null;
+		}
+
 		const matchingModels = getMatchingModels(
 			activeModel,
 			services.modelRegistry.getAvailable(),
@@ -1947,7 +2450,7 @@ export function useSessionController(
 				if (existing) {
 					setActiveModel(existing.runtime.agent.state.model);
 					void activateSession(itemId);
-					setActivePicker(null);
+					setPickerStack([]);
 					return;
 				}
 				const summary = services.sessionStore
@@ -1969,6 +2472,7 @@ export function useSessionController(
 				const entry = buildSessionRuntime(
 					itemId,
 					selectedModel ?? null,
+					stored.thinkingLevel,
 					stored.revert,
 					stored.messages,
 				);
@@ -1980,7 +2484,45 @@ export function useSessionController(
 					setActiveModel(selectedModel);
 				}
 				void activateSession(itemId);
-				setActivePicker(null);
+				setPickerStack([]);
+				return;
+			}
+
+			if (currentPicker.kind === "settings") {
+				const nextPicker = itemId as SettingsPickerItemId;
+				if (nextPicker === "provider") {
+					setPickerStack((s) => [...s, { kind: "provider", mode: "login" }]);
+					return;
+				}
+				if (nextPicker === "model") {
+					setPickerStack((s) => [...s, { kind: "model", query: "" }]);
+					return;
+				}
+				if (nextPicker === "variants") {
+					setPickerStack((s) => [...s, { kind: "variants" }]);
+					return;
+				}
+				if (nextPicker === "editor") {
+					setPickerStack((s) => [...s, { kind: "editor" }]);
+				}
+				return;
+			}
+
+			if (currentPicker.kind === "variants") {
+				applyThinkingLevel(itemId as ThinkingLevel);
+				return;
+			}
+
+			if (currentPicker.kind === "editor") {
+				const preset = itemId as EditorPreset;
+				if (preset === "custom") {
+					openCustomEditorDialog();
+					return;
+				}
+
+				services.settingsManager.setDefaultEditor(preset);
+				setPickerStack([]);
+				setCommandNotice("Default editor updated.");
 				return;
 			}
 
@@ -2004,9 +2546,11 @@ export function useSessionController(
 		},
 		[
 			activateSession,
+			applyThinkingLevel,
 			beginLoginFlow,
 			buildSessionRuntime,
 			logoutProvider,
+			openCustomEditorDialog,
 			selectModel,
 			services,
 		],
@@ -2031,10 +2575,12 @@ export function useSessionController(
 		resetSession,
 		sessionTitle: currentSessionTitle,
 		activeModel,
+		activeThinkingLevel,
 		toolDefinitions: runtimeRef.current?.toolDefinitions ?? {},
 		availableProviderCount: getAvailableProviderCount(services),
 		commandPickerState,
-		closeCommandPicker: closeActivePicker,
+		closeCommandPicker: popPickerStack,
+		clearCommandPickerStack: clearPickerStack,
 		selectCommandPickerItem,
 		copySessionIdFromPicker,
 		openSessionRenameDialog: openRenameDialog,
@@ -2048,6 +2594,15 @@ export function useSessionController(
 		setSessionRenameValue,
 		submitSessionRename,
 		cancelSessionRename,
+		showHotkeysDialog,
+		closeHotkeysDialog,
+		exportConfirmDialog,
+		confirmExportFromDialog,
+		cancelExportConfirmDialog,
+		textInputDialogState,
+		setTextInputDialogValue,
+		submitCustomEditorDialog,
+		closeTextInputDialog,
 		messageActionsState,
 		openMessageActions,
 		closeMessageActions,

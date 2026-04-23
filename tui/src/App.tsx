@@ -4,8 +4,11 @@ import { useCallback, useEffect, useRef } from "react";
 import { AppFooter } from "./app/AppFooter";
 import { copyToClipboard } from "./app/clipboard";
 import { copySelection } from "./app/copySelection";
+import { superskyHotkeys } from "./app/hotkeys";
 import { Toast, ToastProvider, useToast } from "./app/Toast";
 import { Composer, type ComposerHandle } from "./session/Composer";
+import { ConfirmDialog } from "./session/ConfirmDialog";
+import { HotkeysDialog } from "./session/HotkeysDialog";
 import { InlineCommandPickerDialog } from "./session/InlineCommandPickerDialog";
 import { LoginDialog } from "./session/LoginDialog";
 import { deriveSessionLayout } from "./session/layout";
@@ -17,6 +20,7 @@ import { SessionPickerDialog } from "./session/SessionPickerDialog";
 import { SessionRenameDialog } from "./session/SessionRenameDialog";
 import { SessionRevertBanner } from "./session/SessionRevertBanner";
 import { SessionSidebar } from "./session/SessionSidebar";
+import { TextInputDialog } from "./session/TextInputDialog";
 import { useSessionController } from "./session/useSessionController";
 import { WelcomeScreen } from "./session/WelcomeScreen";
 import { colors } from "./shared/theme";
@@ -57,10 +61,12 @@ function AppContent({ projectLine, services, initialSessionId }: AppProps) {
 		showNextHistory,
 		sessionTitle,
 		activeModel,
+		activeThinkingLevel,
 		toolDefinitions,
 		availableProviderCount,
 		commandPickerState,
 		closeCommandPicker,
+		clearCommandPickerStack,
 		selectCommandPickerItem,
 		copySessionIdFromPicker,
 		openSessionRenameDialog,
@@ -74,6 +80,15 @@ function AppContent({ projectLine, services, initialSessionId }: AppProps) {
 		setSessionRenameValue,
 		submitSessionRename,
 		cancelSessionRename,
+		showHotkeysDialog,
+		closeHotkeysDialog,
+		exportConfirmDialog,
+		confirmExportFromDialog,
+		cancelExportConfirmDialog,
+		textInputDialogState,
+		setTextInputDialogValue,
+		submitCustomEditorDialog,
+		closeTextInputDialog,
 		messageActionsState,
 		openMessageActions,
 		closeMessageActions,
@@ -93,6 +108,9 @@ function AppContent({ projectLine, services, initialSessionId }: AppProps) {
 	const hasModalOpen =
 		loginDialogState !== null ||
 		sessionRenameDialogState !== null ||
+		textInputDialogState !== null ||
+		exportConfirmDialog !== null ||
+		showHotkeysDialog ||
 		dialogCommandPickerState !== null ||
 		sessionPickerState !== null ||
 		messageActionsState !== null;
@@ -100,6 +118,9 @@ function AppContent({ projectLine, services, initialSessionId }: AppProps) {
 		? availableProviderCount > 1
 			? `(${activeModel.provider}) ${activeModel.id}`
 			: activeModel.id
+		: null;
+	const footerModelLabel = modelLabel
+		? `${modelLabel} · ${activeThinkingLevel}`
 		: null;
 	const focusComposer = useCallback(() => {
 		composerRef.current?.focus();
@@ -262,7 +283,7 @@ function AppContent({ projectLine, services, initialSessionId }: AppProps) {
 				isNewSession={isNewSession}
 				isRunning={state.isStreaming}
 				projectLine={projectLine}
-				modelName={modelLabel}
+				modelName={footerModelLabel}
 				onMouseDown={focusComposer}
 			/>
 
@@ -284,13 +305,22 @@ function AppContent({ projectLine, services, initialSessionId }: AppProps) {
 				/>
 			) : null}
 
+			{textInputDialogState ? (
+				<TextInputDialog
+					state={textInputDialogState}
+					onInputChange={setTextInputDialogValue}
+					onSubmit={submitCustomEditorDialog}
+					onCancel={closeTextInputDialog}
+				/>
+			) : null}
+
 			{sessionPickerState ? (
 				<SessionPickerDialog
 					state={sessionPickerState}
 					onClose={closeCommandPicker}
 					onSelect={selectCommandPickerItem}
 					onRename={(sessionId) => {
-						closeCommandPicker();
+						clearCommandPickerStack();
 						openSessionRenameDialog(sessionId, {
 							returnToSessionsDialog: true,
 						});
@@ -338,6 +368,19 @@ function AppContent({ projectLine, services, initialSessionId }: AppProps) {
 							onSelect: forkSessionFromMessage,
 						},
 					]}
+				/>
+			) : null}
+
+			{showHotkeysDialog ? (
+				<HotkeysDialog entries={superskyHotkeys} onClose={closeHotkeysDialog} />
+			) : null}
+
+			{exportConfirmDialog ? (
+				<ConfirmDialog
+					title="Export session?"
+					message={`Write a markdown transcript to ${exportConfirmDialog.exportPath}. An existing file at that path will be overwritten.`}
+					onConfirm={confirmExportFromDialog}
+					onCancel={cancelExportConfirmDialog}
 				/>
 			) : null}
 

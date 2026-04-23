@@ -183,6 +183,34 @@ export function MessageList({
 		</box>
 	);
 
+	const renderCompactionSummary = (
+		message: Extract<
+			SessionState["messages"][number],
+			{ role: "compactionSummary" }
+		>,
+	) => (
+		<box
+			key={`compaction-${message.timestamp}`}
+			flexDirection="column"
+			marginBottom={1}
+		>
+			<box
+				border
+				borderColor={colors.commandMenuBorder}
+				backgroundColor={colors.panelBackground}
+				paddingX={1}
+				paddingY={1}
+				flexDirection="column"
+			>
+				<text fg={colors.accentText}>Session compacted</text>
+				<text fg={colors.dimText}>{message.summary}</text>
+				<text
+					fg={colors.dimText}
+				>{`${message.archivedMessageCount} archived message${message.archivedMessageCount === 1 ? "" : "s"}`}</text>
+			</box>
+		</box>
+	);
+
 	return (
 		// biome-ignore lint/a11y/noStaticElementInteractions: Message list clicks refocus the composer textarea.
 		<scrollbox
@@ -219,6 +247,8 @@ export function MessageList({
 						/>
 					) : message.role === "bashExecution" ? (
 						renderBashExecution(message, "committed")
+					) : message.role === "compactionSummary" ? (
+						renderCompactionSummary(message)
 					) : null,
 				)}
 				{pendingBashMessages.map((message) =>

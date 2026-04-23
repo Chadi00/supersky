@@ -1,4 +1,10 @@
-export type CommandPickerKind = "provider" | "model" | "sessions";
+export type CommandPickerKind =
+	| "provider"
+	| "model"
+	| "sessions"
+	| "settings"
+	| "variants"
+	| "editor";
 
 export type InlineCommandPickerKind = Exclude<CommandPickerKind, "sessions">;
 

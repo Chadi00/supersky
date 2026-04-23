@@ -49,7 +49,7 @@ type ContextUsageEstimate = {
  * Per-message token estimate (chars/4), matching pi-mono `estimateTokens`
  * for supported roles.
  */
-function estimateTokens(message: AgentMessage): number {
+export function estimateTokens(message: AgentMessage): number {
 	let chars = 0;
 	// String role: pi-mono supports extra AgentMessage kinds not in the base Message union.
 	const role = (message as { role: string }).role;

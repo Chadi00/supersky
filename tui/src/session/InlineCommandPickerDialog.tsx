@@ -158,13 +158,6 @@ export function InlineCommandPickerDialog({
 			return;
 		}
 
-		if (key.name === "escape") {
-			key.preventDefault();
-			key.stopPropagation();
-			onClose();
-			return;
-		}
-
 		if (key.name === "up" || (key.ctrl && key.name === "p")) {
 			key.preventDefault();
 			key.stopPropagation();

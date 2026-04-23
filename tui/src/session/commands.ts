@@ -8,6 +8,12 @@ export const RENAME_COMMAND = "rename";
 export const SETTINGS_COMMAND = "settings";
 export const NEW_SESSION_COMMAND = "new";
 export const FORK_COMMAND = "fork";
+export const EXPORT_COMMAND = "export";
+export const COPY_COMMAND = "copy";
+export const HOTKEY_COMMAND = "hotkey";
+export const VARIANTS_COMMAND = "variants";
+export const COMPACT_COMMAND = "compact";
+export const EDITOR_COMMAND = "editor";
 export const EXIT_COMMAND = "exit";
 
 export type SlashCommandName =
@@ -19,6 +25,12 @@ export type SlashCommandName =
 	| typeof SETTINGS_COMMAND
 	| typeof NEW_SESSION_COMMAND
 	| typeof FORK_COMMAND
+	| typeof EXPORT_COMMAND
+	| typeof COPY_COMMAND
+	| typeof HOTKEY_COMMAND
+	| typeof VARIANTS_COMMAND
+	| typeof COMPACT_COMMAND
+	| typeof EDITOR_COMMAND
 	| typeof EXIT_COMMAND;
 
 export type SlashCommand = {
@@ -54,7 +66,7 @@ const slashCommands: SlashCommand[] = [
 	},
 	{
 		name: SETTINGS_COMMAND,
-		description: "Open settings",
+		description: "Configure supersky",
 	},
 	{
 		name: NEW_SESSION_COMMAND,
@@ -63,6 +75,30 @@ const slashCommands: SlashCommand[] = [
 	{
 		name: FORK_COMMAND,
 		description: "Fork from the last user message",
+	},
+	{
+		name: EXPORT_COMMAND,
+		description: "Export session transcript",
+	},
+	{
+		name: COPY_COMMAND,
+		description: "Copy the last assistant message",
+	},
+	{
+		name: HOTKEY_COMMAND,
+		description: "Show supersky hotkeys",
+	},
+	{
+		name: VARIANTS_COMMAND,
+		description: "Change thinking level",
+	},
+	{
+		name: COMPACT_COMMAND,
+		description: "Compact the active session",
+	},
+	{
+		name: EDITOR_COMMAND,
+		description: "Open the project in your editor",
 	},
 	{
 		name: EXIT_COMMAND,
@@ -96,7 +132,11 @@ export function findSlashCommand(name: string) {
 			? LOGIN_COMMAND
 			: normalized === "session"
 				? SESSIONS_COMMAND
-				: normalized;
+				: normalized === "variant"
+					? VARIANTS_COMMAND
+					: normalized === "hotkeys"
+						? HOTKEY_COMMAND
+						: normalized;
 
 	return (
 		slashCommands.find((command) => command.name === canonicalName) ?? null
