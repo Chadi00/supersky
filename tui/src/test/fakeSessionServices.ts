@@ -20,6 +20,8 @@ import type {
 } from "../session/providerState/piSource";
 import type { SessionServices } from "../session/providerState/services";
 import type {
+	SessionPatch,
+	SessionRevertState,
 	SessionStoreLike,
 	SessionSummary,
 	StoredSession,
@@ -369,7 +371,7 @@ class FakeModelRegistry implements ModelRegistryLike {
 
 class FakeSessionStore implements SessionStoreLike {
 	private sessions = new Map<string, StoredSession>();
-	private checkpoints = new Map<string, Map<number, string>>();
+	private patches = new Map<string, SessionPatch[]>();
 	private lastActiveSessionId: string | null = null;
 
 	listSessions() {
@@ -383,7 +385,8 @@ class FakeSessionStore implements SessionStoreLike {
 					modelProvider: session.modelProvider,
 					modelId: session.modelId,
 					workspaceRoot: session.workspaceRoot,
-					headSnapshotId: session.headSnapshotId,
+					parentSessionId: session.parentSessionId,
+					revert: session.revert,
 				}),
 			)
 			.sort((a, b) => b.updatedAt - a.updatedAt);
@@ -398,7 +401,7 @@ class FakeSessionStore implements SessionStoreLike {
 		title: string;
 		workspaceRoot: string;
 		model: Model<Api> | null;
-		headSnapshotId?: string | null;
+		parentSessionId?: string | null;
 		createdAt?: number;
 	}) {
 		const now = input.createdAt ?? Date.now();
@@ -410,7 +413,8 @@ class FakeSessionStore implements SessionStoreLike {
 			modelProvider: input.model?.provider ?? null,
 			modelId: input.model?.id ?? null,
 			workspaceRoot: input.workspaceRoot,
-			headSnapshotId: input.headSnapshotId ?? null,
+			parentSessionId: input.parentSessionId ?? null,
+			revert: null,
 			messages: [],
 		};
 		this.sessions.set(input.id, session);
@@ -422,7 +426,8 @@ class FakeSessionStore implements SessionStoreLike {
 			modelProvider: session.modelProvider,
 			modelId: session.modelId,
 			workspaceRoot: session.workspaceRoot,
-			headSnapshotId: session.headSnapshotId,
+			parentSessionId: session.parentSessionId,
+			revert: session.revert,
 		};
 	}
 
@@ -441,10 +446,10 @@ class FakeSessionStore implements SessionStoreLike {
 		session.updatedAt = Date.now();
 	}
 
-	updateSessionHeadSnapshot(sessionId: string, snapshotId: string | null) {
+	setSessionRevert(sessionId: string, revert: SessionRevertState | null) {
 		const session = this.sessions.get(sessionId);
 		if (!session) return;
-		session.headSnapshotId = snapshotId;
+		session.revert = revert;
 		session.updatedAt = Date.now();
 	}
 
@@ -455,52 +460,65 @@ class FakeSessionStore implements SessionStoreLike {
 		session.updatedAt = Date.now();
 	}
 
-	setUserMessageCheckpoint(
-		sessionId: string,
-		messageTimestamp: number,
-		snapshotId: string,
-	) {
-		const checkpoints =
-			this.checkpoints.get(sessionId) ?? new Map<number, string>();
-		checkpoints.set(messageTimestamp, snapshotId);
-		this.checkpoints.set(sessionId, checkpoints);
+	listSessionPatches(sessionId: string) {
+		return [...(this.patches.get(sessionId) ?? [])];
 	}
 
-	getUserMessageCheckpoint(sessionId: string, messageTimestamp: number) {
-		return this.checkpoints.get(sessionId)?.get(messageTimestamp) ?? null;
+	replaceSessionPatches(sessionId: string, patches: SessionPatch[]) {
+		this.patches.set(
+			sessionId,
+			patches.map((patch) => ({
+				messageTimestamp: patch.messageTimestamp,
+				snapshotId: patch.snapshotId,
+				files: [...patch.files],
+			})),
+		);
+		const session = this.sessions.get(sessionId);
+		if (session) {
+			session.updatedAt = Date.now();
+		}
 	}
 
-	listUserMessageCheckpoints(sessionId: string) {
-		return [...(this.checkpoints.get(sessionId)?.entries() ?? [])]
-			.sort((left, right) => left[0] - right[0])
-			.map(([messageTimestamp, snapshotId]) => ({
-				messageTimestamp,
-				snapshotId,
-			}));
+	addSessionPatch(sessionId: string, patch: SessionPatch) {
+		const patches = this.patches.get(sessionId) ?? [];
+		patches.push({
+			messageTimestamp: patch.messageTimestamp,
+			snapshotId: patch.snapshotId,
+			files: [...patch.files],
+		});
+		patches.sort((left, right) => left.messageTimestamp - right.messageTimestamp);
+		this.patches.set(sessionId, patches);
+		const session = this.sessions.get(sessionId);
+		if (session) {
+			session.updatedAt = Date.now();
+		}
 	}
 
-	deleteUserMessageCheckpointsFrom(sessionId: string, messageTimestamp: number) {
-		const checkpoints = this.checkpoints.get(sessionId);
-		if (!checkpoints) {
+	deleteSessionPatchesFrom(sessionId: string, messageTimestamp: number) {
+		const patches = this.patches.get(sessionId);
+		if (!patches) {
 			return;
 		}
-		for (const timestamp of checkpoints.keys()) {
-			if (timestamp >= messageTimestamp) {
-				checkpoints.delete(timestamp);
-			}
+		this.patches.set(
+			sessionId,
+			patches.filter((patch) => patch.messageTimestamp < messageTimestamp),
+		);
+		const session = this.sessions.get(sessionId);
+		if (session) {
+			session.updatedAt = Date.now();
 		}
 	}
 
 	listReferencedSnapshotIds() {
 		const snapshotIds = new Set<string>();
 		for (const session of this.sessions.values()) {
-			if (session.headSnapshotId) {
-				snapshotIds.add(session.headSnapshotId);
+			if (session.revert?.snapshotId) {
+				snapshotIds.add(session.revert.snapshotId);
 			}
 		}
-		for (const checkpoints of this.checkpoints.values()) {
-			for (const snapshotId of checkpoints.values()) {
-				snapshotIds.add(snapshotId);
+		for (const patches of this.patches.values()) {
+			for (const patch of patches) {
+				snapshotIds.add(patch.snapshotId);
 			}
 		}
 		return [...snapshotIds];
@@ -508,7 +526,7 @@ class FakeSessionStore implements SessionStoreLike {
 
 	deleteSession(sessionId: string) {
 		this.sessions.delete(sessionId);
-		this.checkpoints.delete(sessionId);
+		this.patches.delete(sessionId);
 		if (this.lastActiveSessionId === sessionId) {
 			this.lastActiveSessionId = null;
 		}

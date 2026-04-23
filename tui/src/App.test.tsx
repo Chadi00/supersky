@@ -251,7 +251,7 @@ test("the message actions dialog can copy a user message", async () => {
 	);
 });
 
-test("forking from a message restores the saved workspace snapshot in the new session", async () => {
+test("forking from a message keeps the current workspace files intact", async () => {
 	const workspaceRoot = await mkdtemp(join(tmpdir(), "supersky-fork-workspace-"));
 	const snapshotsDir = await mkdtemp(join(tmpdir(), "supersky-fork-snapshots-"));
 	const filePath = join(workspaceRoot, "note.txt");
@@ -283,7 +283,7 @@ test("forking from a message restores the saved workspace snapshot in the new se
 				await settleScrollLayout(setup);
 
 				expect(sharedServices.sessionStore.listSessions()).toHaveLength(2);
-				expect(await readFile(filePath, "utf8")).toBe("base\n");
+				expect(await readFile(filePath, "utf8")).toBe("changed\n");
 				expect(getComposerText(setup)).toContain("message 0");
 				expect(
 					sharedServices.sessionStore.getSession(originalSessionId ?? "")?.messages,
@@ -304,10 +304,22 @@ test("forking from a message restores the saved workspace snapshot in the new se
 	}
 });
 
-test("reverting from a message restores files and truncates the current session", async () => {
+test("reverting from a message restores session file changes and shows a redo banner", async () => {
 	const workspaceRoot = await mkdtemp(join(tmpdir(), "supersky-revert-workspace-"));
 	const snapshotsDir = await mkdtemp(join(tmpdir(), "supersky-revert-snapshots-"));
 	const filePath = join(workspaceRoot, "note.txt");
+	const executeUserShellCommandSpy = spyOn(
+		userShell,
+		"executeUserShellCommand",
+	).mockImplementation(async () => {
+		await writeFile(filePath, "changed\n", "utf8");
+		return {
+			output: "changed\n",
+			exitCode: 0,
+			cancelled: false,
+			truncated: false,
+		};
+	});
 	await writeFile(filePath, "base\n", "utf8");
 	const sharedServices = createFakeSessionServices({
 		workspaceRoot,
@@ -319,13 +331,15 @@ test("reverting from a message restores files and truncates the current session"
 			async (setup) => {
 				await sendMessages(setup, 1);
 				await settleScrollLayout(setup);
+				await submitText(setup, "!mock-change-note");
+				await settleScrollLayout(setup);
 
 				const sessionId = getCurrentSessionId(sharedServices);
 				const message = sharedServices.sessionStore.getSession(sessionId ?? "")
 					?.messages[0];
 				expect(message?.role).toBe("user");
-
-				await writeFile(filePath, "changed\n", "utf8");
+				expect(setup.captureCharFrame()).toContain("changed");
+				expect(await readFile(filePath, "utf8")).toBe("changed\n");
 
 				await clickRenderable(
 					setup,
@@ -337,15 +351,78 @@ test("reverting from a message restores files and truncates the current session"
 
 				expect(await readFile(filePath, "utf8")).toBe("base\n");
 				expect(getComposerText(setup)).toContain("message 0");
-				expect(sharedServices.sessionStore.getSession(sessionId ?? "")?.messages).toEqual(
-					[],
-				);
+				const frame = setup.captureCharFrame();
+				expect(frame).toContain("1 message reverted");
+				expect(frame).toContain("Redo");
 			},
 			{ width: 110, height: 30 },
 			"~/projects/supersky:main",
 			sharedServices,
 		);
 	} finally {
+		executeUserShellCommandSpy.mockRestore();
+		await rm(workspaceRoot, { recursive: true, force: true });
+		await rm(snapshotsDir, { recursive: true, force: true });
+	}
+});
+
+test("redo restores reverted messages and file changes", async () => {
+	const workspaceRoot = await mkdtemp(join(tmpdir(), "supersky-redo-workspace-"));
+	const snapshotsDir = await mkdtemp(join(tmpdir(), "supersky-redo-snapshots-"));
+	const filePath = join(workspaceRoot, "note.txt");
+	const executeUserShellCommandSpy = spyOn(
+		userShell,
+		"executeUserShellCommand",
+	).mockImplementation(async () => {
+		await writeFile(filePath, "changed\n", "utf8");
+		return {
+			output: "changed\n",
+			exitCode: 0,
+			cancelled: false,
+			truncated: false,
+		};
+	});
+	await writeFile(filePath, "base\n", "utf8");
+	const sharedServices = createFakeSessionServices({
+		workspaceRoot,
+		snapshotsDir,
+	});
+
+	try {
+		await withApp(
+			async (setup) => {
+				await sendMessages(setup, 1);
+				await settleScrollLayout(setup);
+				await submitText(setup, "!mock-change-note");
+				await settleScrollLayout(setup);
+
+				const sessionId = getCurrentSessionId(sharedServices);
+				const message = sharedServices.sessionStore.getSession(sessionId ?? "")
+					?.messages[0];
+				expect(message?.role).toBe("user");
+
+				await clickRenderable(
+					setup,
+					getUserMessageRowId(message as Extract<AgentMessage, { role: "user" }>),
+				);
+				await settleScrollLayout(setup);
+				await clickRenderable(setup, "message-action-revert");
+				await settleScrollLayout(setup);
+
+				expect(await readFile(filePath, "utf8")).toBe("base\n");
+
+				await clickRenderable(setup, "session-revert-redo");
+				await settleScrollLayout(setup);
+
+				expect(await readFile(filePath, "utf8")).toBe("changed\n");
+				expect(setup.captureCharFrame()).not.toContain("message reverted");
+			},
+			{ width: 110, height: 30 },
+			"~/projects/supersky:main",
+			sharedServices,
+		);
+	} finally {
+		executeUserShellCommandSpy.mockRestore();
 		await rm(workspaceRoot, { recursive: true, force: true });
 		await rm(snapshotsDir, { recursive: true, force: true });
 	}
@@ -1001,8 +1078,15 @@ test("the session picker keeps the current session left aligned", async () => {
 	);
 });
 
-test("the session picker keyboard navigation switches sessions without snapping back", async () => {
-	const sharedServices = createFakeSessionServices();
+test("the session picker keyboard navigation switches sessions without restoring workspace files", async () => {
+	const workspaceRoot = await mkdtemp(join(tmpdir(), "supersky-switch-workspace-"));
+	const snapshotsDir = await mkdtemp(join(tmpdir(), "supersky-switch-snapshots-"));
+	const filePath = join(workspaceRoot, "switch.txt");
+	await writeFile(filePath, "initial\n", "utf8");
+	const sharedServices = createFakeSessionServices({
+		workspaceRoot,
+		snapshotsDir,
+	});
 	const now = Date.now();
 
 	sharedServices.sessionStore.createSession({
@@ -1029,25 +1113,34 @@ test("the session picker keyboard navigation switches sessions without snapping 
 	);
 	sharedServices.sessionStore.setLastActiveSessionId("session-two");
 
-	await withApp(
-		async (setup) => {
-			await submitText(setup, "/sessions");
-			await settleScrollLayout(setup);
+	try {
+		await withApp(
+			async (setup) => {
+				await writeFile(filePath, "modified while session two active\n", "utf8");
+				await submitText(setup, "/sessions");
+				await settleScrollLayout(setup);
 
-			await pressDown(setup);
-			await pressEnter(setup);
-			await settleScrollLayout(setup);
+				await pressDown(setup);
+				await pressEnter(setup);
+				await settleScrollLayout(setup);
 
-			const frame = setup.captureCharFrame();
+				const frame = setup.captureCharFrame();
 
-			expect(frame).toContain("first saved message");
-			expect(frame).not.toContain("second saved message");
-		},
-		{ width: 110, height: 30 },
-		"~/projects/supersky:main",
-		sharedServices,
-		{ initialSessionId: "session-two" },
-	);
+				expect(frame).toContain("first saved message");
+				expect(frame).not.toContain("second saved message");
+				expect(await readFile(filePath, "utf8")).toBe(
+					"modified while session two active\n",
+				);
+			},
+			{ width: 110, height: 30 },
+			"~/projects/supersky:main",
+			sharedServices,
+			{ initialSessionId: "session-two" },
+		);
+	} finally {
+		await rm(workspaceRoot, { recursive: true, force: true });
+		await rm(snapshotsDir, { recursive: true, force: true });
+	}
 });
 
 test("the session picker keeps the navigated row selected across rerenders", async () => {

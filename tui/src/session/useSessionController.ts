@@ -51,11 +51,20 @@ import {
 	createSessionServices,
 	type SessionServices,
 } from "./providerState/services";
+import type { SessionRevertState } from "./providerState/sessionStore";
 import type { SessionRenameDialogState } from "./SessionRenameDialog";
 import {
 	buildSessionModifiedFiles,
 	type SessionModifiedFile,
 } from "./sessionFileDiff";
+import {
+	applySessionRevert,
+	cleanupSessionRevert,
+	cloneSessionPatchesBefore,
+	getRevertedUserMessages,
+	getVisibleSessionMessages,
+	unrevertSession,
+} from "./sessionRevert";
 import { sessionReducer } from "./sessionReducer";
 import {
 	createInitialSessionState,
@@ -82,7 +91,8 @@ type MessageActionTarget = {
 type SessionRuntimeEntry = {
 	id: string;
 	title: string;
-	headSnapshotId: string | null;
+	revert: SessionRevertState | null;
+	pendingTurnSnapshotId: string | null;
 	runtime: AgentRuntimeLike;
 	toolExecutions: Map<string, ToolExecutionState>;
 	pendingBashMessages: BashExecutionMessage[];
@@ -91,6 +101,16 @@ type SessionRuntimeEntry = {
 };
 
 const DEFAULT_SESSION_TITLE = "New session";
+
+function getForkedTitle(title: string) {
+	const match = title.match(/^(.+) \(fork #(\d+)\)$/);
+	if (match) {
+		const base = match[1];
+		const number = Number.parseInt(match[2] ?? "0", 10);
+		return `${base} (fork #${number + 1})`;
+	}
+	return `${title} (fork #1)`;
+}
 
 function getModelPickerItemId(model: Model<Api>) {
 	return `${model.provider}/${model.id}`;
@@ -310,36 +330,6 @@ export function useSessionController(
 		[],
 	);
 
-	const updateSessionHeadSnapshot = useCallback(
-		(sessionId: string, snapshotId: string | null) => {
-			services.sessionStore.updateSessionHeadSnapshot(sessionId, snapshotId);
-			const entry = sessionsRef.current.get(sessionId);
-			if (entry) {
-				entry.headSnapshotId = snapshotId;
-			}
-		},
-		[services],
-	);
-
-	const captureAndStoreSessionHeadSnapshot = useCallback(
-		(sessionId: string) => {
-			const snapshotId = services.workspaceSnapshotStore.capture();
-			updateSessionHeadSnapshot(sessionId, snapshotId);
-			return snapshotId;
-		},
-		[services, updateSessionHeadSnapshot],
-	);
-
-	const restoreSessionWorkspace = useCallback(
-		(snapshotId: string | null) => {
-			if (!snapshotId) {
-				return;
-			}
-			services.workspaceSnapshotStore.restore(snapshotId);
-		},
-		[services],
-	);
-
 	const pruneUnreferencedSnapshots = useCallback(() => {
 		services.workspaceSnapshotStore.pruneReferencedSnapshotIds(
 			services.sessionStore.listReferencedSnapshotIds(),
@@ -350,7 +340,7 @@ export function useSessionController(
 		(
 			sessionId: string,
 			model: Model<Api> | null,
-			headSnapshotId: string | null,
+			revert: SessionRevertState | null,
 			initialMessages?: AgentMessage[],
 		) => {
 			const runtime =
@@ -373,7 +363,31 @@ export function useSessionController(
 			const toolExecutions = new Map<string, ToolExecutionState>();
 			const unsubscribe = runtime.subscribe((event: AgentEvent) => {
 				try {
+					const entry = sessionsRef.current.get(sessionId);
+					if (!entry) {
+						return;
+					}
 					switch (event.type) {
+					case "turn_start": {
+						entry.pendingTurnSnapshotId = services.workspaceSnapshotStore.track();
+						break;
+					}
+					case "turn_end": {
+						const snapshotId = entry.pendingTurnSnapshotId;
+						entry.pendingTurnSnapshotId = null;
+						if (snapshotId) {
+							const patch = services.workspaceSnapshotStore.patch(snapshotId);
+							if (patch.files.length > 0) {
+								services.sessionStore.addSessionPatch(sessionId, {
+									messageTimestamp: event.message.timestamp,
+									snapshotId: patch.snapshotId,
+									files: patch.files,
+								});
+								pruneUnreferencedSnapshots();
+							}
+						}
+						break;
+					}
 					case "tool_execution_start": {
 						const previous = toolExecutions.get(event.toolCallId);
 						toolExecutions.set(event.toolCallId, {
@@ -410,20 +424,15 @@ export function useSessionController(
 					}
 					case "agent_end": {
 						toolExecutions.clear();
-						const entry = sessionsRef.current.get(sessionId);
 						if (entry && entry.pendingBashMessages.length > 0) {
 							for (const bashMessage of entry.pendingBashMessages) {
 								runtime.agent.state.messages.push(bashMessage);
 							}
 							entry.pendingBashMessages = [];
 						}
-						captureAndStoreSessionHeadSnapshot(sessionId);
-						pruneUnreferencedSnapshots();
 						break;
 					}
 					}
-					const entry = sessionsRef.current.get(sessionId);
-					if (!entry) return;
 					services.sessionStore.replaceSessionMessages(
 						sessionId,
 						runtime.agent.state.messages,
@@ -440,7 +449,8 @@ export function useSessionController(
 			const entry: SessionRuntimeEntry = {
 				id: sessionId,
 				title: "New session",
-				headSnapshotId,
+				revert,
+				pendingTurnSnapshotId: null,
 				runtime,
 				toolExecutions,
 				pendingBashMessages: [],
@@ -448,10 +458,9 @@ export function useSessionController(
 				unsubscribe,
 			};
 			sessionsRef.current.set(sessionId, entry);
-			return entry;
+		return entry;
 		},
 		[
-			captureAndStoreSessionHeadSnapshot,
 			pruneUnreferencedSnapshots,
 			services,
 			syncRuntimeState,
@@ -467,46 +476,22 @@ export function useSessionController(
 			setActiveSessionId(sessionId);
 			setShowWelcomeScreen(false);
 			services.sessionStore.setLastActiveSessionId(sessionId);
-			if (
-				entry.headSnapshotId &&
-				!services.workspaceSnapshotStore.has(entry.headSnapshotId)
-			) {
-				updateSessionHeadSnapshot(sessionId, null);
-				pruneUnreferencedSnapshots();
-				setCommandNotice("Saved workspace snapshot is unavailable for this session.");
-			} else {
-				try {
-					restoreSessionWorkspace(entry.headSnapshotId);
-				} catch (error: unknown) {
-					updateSessionHeadSnapshot(sessionId, null);
-					pruneUnreferencedSnapshots();
-					setCommandNotice(
-						error instanceof Error ? error.message : String(error),
-					);
-				}
-			}
 			syncRuntimeState();
 			return entry.runtime;
 		},
-		[
-			pruneUnreferencedSnapshots,
-			restoreSessionWorkspace,
-			services,
-			syncRuntimeState,
-			updateSessionHeadSnapshot,
-		],
+		[services, syncRuntimeState],
 	);
 
 	const createAndActivateSession = useCallback(
 		(
 			model: Model<Api> | null,
-			options?: { headSnapshotId?: string | null; initialMessages?: AgentMessage[] },
+			options?: { initialMessages?: AgentMessage[] },
 		) => {
 			const sessionId = crypto.randomUUID();
 			const entry = buildSessionRuntime(
 				sessionId,
 				model,
-				options?.headSnapshotId ?? null,
+				null,
 				options?.initialMessages,
 			);
 			if (!entry) {
@@ -517,8 +502,13 @@ export function useSessionController(
 				title: "New session",
 				workspaceRoot: services.workspaceRoot,
 				model,
-				headSnapshotId: options?.headSnapshotId ?? null,
 			});
+			if (options?.initialMessages) {
+				services.sessionStore.replaceSessionMessages(
+					sessionId,
+					options.initialMessages,
+				);
+			}
 			activateSession(sessionId);
 			return entry.runtime;
 		},
@@ -541,6 +531,32 @@ export function useSessionController(
 		[createAndActivateSession],
 	);
 
+	const cleanupRuntimeRevert = useCallback(
+		(sessionId: string) => {
+			const entry = sessionsRef.current.get(sessionId);
+			if (!entry?.revert) {
+				return false;
+			}
+
+			const nextMessages = cleanupSessionRevert(
+				services,
+				sessionId,
+				entry.runtime.agent.state.messages,
+			);
+			entry.revert = null;
+			entry.pendingBashMessages = [];
+			entry.pendingTurnSnapshotId = null;
+			entry.toolExecutions.clear();
+			entry.runtime.reset();
+			entry.runtime.agent.state.messages = nextMessages;
+			if (activeSessionIdRef.current === sessionId) {
+				syncRuntimeState();
+			}
+			return true;
+		},
+		[services, syncRuntimeState],
+	);
+
 	useEffect(() => {
 		const fallbackModel = activeModelRef.current;
 		if (initialSessionId) {
@@ -561,7 +577,7 @@ export function useSessionController(
 			const entry = buildSessionRuntime(
 				target.id,
 				storedModel ?? fallbackModel,
-				stored?.headSnapshotId ?? target.headSnapshotId,
+				stored?.revert ?? target.revert,
 				stored?.messages,
 			);
 			if (!entry) {
@@ -800,29 +816,18 @@ export function useSessionController(
 		}
 
 		const entry = sessionsRef.current.get(sessionId);
-		const storedCheckpointSnapshotId = services.sessionStore.getUserMessageCheckpoint(
-			sessionId,
-			message.timestamp,
-		);
-		const checkpointSnapshotId =
-			storedCheckpointSnapshotId &&
-			services.workspaceSnapshotStore.has(storedCheckpointSnapshotId)
-				? storedCheckpointSnapshotId
-				: null;
 		const isBusy = state.isStreaming || Boolean(entry?.composerShellAbort);
 
 		return {
 			sessionId,
 			message,
 			messageIndex,
-			checkpointSnapshotId,
 			isBusy,
 		};
 	}, [
 		activeSessionId,
 		findUserMessageIndex,
 		messageActionTarget,
-		services,
 		state.isStreaming,
 		state.messages,
 	]);
@@ -848,19 +853,16 @@ export function useSessionController(
 			setCommandNotice("Wait for the active session to finish before forking.");
 			return;
 		}
-		if (!activeMessageAction.checkpointSnapshotId) {
-			setCommandNotice("Checkpoint data is unavailable for this message.");
-			return;
-		}
 
 		try {
 			const currentEntry = sessionsRef.current.get(activeMessageAction.sessionId);
 			const nextMessages = state.messages.slice(0, activeMessageAction.messageIndex);
-			const nextTitle = `${currentEntry?.title ?? DEFAULT_SESSION_TITLE} (fork)`;
+			const nextTitle = getForkedTitle(
+				currentEntry?.title ?? DEFAULT_SESSION_TITLE,
+			);
 			const runtime = createAndActivateSession(
 				currentEntry?.runtime.agent.state.model ?? activeModelRef.current,
 				{
-					headSnapshotId: activeMessageAction.checkpointSnapshotId,
 					initialMessages: nextMessages,
 				},
 			);
@@ -873,19 +875,14 @@ export function useSessionController(
 			if (runtimeEntry) {
 				runtimeEntry.title = nextTitle;
 			}
-			for (const checkpoint of services.sessionStore.listUserMessageCheckpoints(
-				activeMessageAction.sessionId,
-			)) {
-				if (checkpoint.messageTimestamp >= activeMessageAction.message.timestamp) {
-					break;
-				}
-				services.sessionStore.setUserMessageCheckpoint(
-					runtime.sessionId,
-					checkpoint.messageTimestamp,
-					checkpoint.snapshotId,
-				);
-			}
 			services.sessionStore.replaceSessionMessages(runtime.sessionId, nextMessages);
+			services.sessionStore.replaceSessionPatches(
+				runtime.sessionId,
+				cloneSessionPatchesBefore(
+					services.sessionStore.listSessionPatches(activeMessageAction.sessionId),
+					activeMessageAction.message.timestamp,
+				),
+			);
 			setDraft(getUserMessageText(activeMessageAction.message));
 			closeMessageActions();
 		} catch (error: unknown) {
@@ -908,40 +905,18 @@ export function useSessionController(
 			setCommandNotice("Wait for the active session to finish before reverting.");
 			return;
 		}
-		if (!activeMessageAction.checkpointSnapshotId) {
-			setCommandNotice("Checkpoint data is unavailable for this message.");
-			return;
-		}
 
 		try {
 			const entry = sessionsRef.current.get(activeMessageAction.sessionId);
-			const runtime = entry?.runtime;
-			if (!entry || !runtime) {
+			if (!entry) {
 				return;
 			}
 
-			await restoreSessionWorkspace(activeMessageAction.checkpointSnapshotId);
-			runtime.reset();
-			runtime.agent.state.messages = state.messages.slice(
-				0,
-				activeMessageAction.messageIndex,
-			);
-			entry.pendingBashMessages = [];
-			entry.toolExecutions.clear();
-			entry.headSnapshotId = activeMessageAction.checkpointSnapshotId;
-			services.sessionStore.replaceSessionMessages(
-				activeMessageAction.sessionId,
-				runtime.agent.state.messages,
-			);
-			services.sessionStore.deleteUserMessageCheckpointsFrom(
+			entry.revert = applySessionRevert(
+				services,
 				activeMessageAction.sessionId,
 				activeMessageAction.message.timestamp,
 			);
-			updateSessionHeadSnapshot(
-				activeMessageAction.sessionId,
-				activeMessageAction.checkpointSnapshotId,
-			);
-			pruneUnreferencedSnapshots();
 			setDraft(getUserMessageText(activeMessageAction.message));
 			closeMessageActions();
 			syncRuntimeState();
@@ -951,14 +926,46 @@ export function useSessionController(
 	}, [
 		activeMessageAction,
 		closeMessageActions,
-		restoreSessionWorkspace,
 		services,
 		setDraft,
 		state.messages,
-		updateSessionHeadSnapshot,
-		pruneUnreferencedSnapshots,
 		syncRuntimeState,
 	]);
+
+	const redoSessionRevert = useCallback(() => {
+		const sessionId = activeSessionIdRef.current;
+		if (!sessionId) {
+			return;
+		}
+		const entry = sessionsRef.current.get(sessionId);
+		if (!entry?.revert) {
+			return;
+		}
+		if (state.isStreaming || entry.composerShellAbort) {
+			setCommandNotice("Wait for the active session to finish before redoing.");
+			return;
+		}
+
+		const nextUserMessage = state.messages.find(
+			(message) =>
+				message.role === "user" &&
+				message.timestamp > entry.revert!.messageTimestamp,
+		);
+		if (!nextUserMessage || nextUserMessage.role !== "user") {
+			unrevertSession(services, sessionId);
+			entry.revert = null;
+			setDraft("");
+			syncRuntimeState();
+			return;
+		}
+
+		entry.revert = applySessionRevert(
+			services,
+			sessionId,
+			nextUserMessage.timestamp,
+		);
+		syncRuntimeState();
+	}, [services, setDraft, state.isStreaming, state.messages, syncRuntimeState]);
 
 	const submitSessionRename = useCallback(() => {
 		const dialog = sessionRenameDialogState;
@@ -1049,14 +1056,14 @@ export function useSessionController(
 								)
 							: null) ?? activeModelRef.current;
 					if (model) {
-						const runtimeEntry =
-							sessionsRef.current.get(fallback.id) ??
-							buildSessionRuntime(
-								fallback.id,
-								model,
-								stored?.headSnapshotId ?? fallback.headSnapshotId,
-								stored?.messages,
-							);
+					const runtimeEntry =
+						sessionsRef.current.get(fallback.id) ??
+						buildSessionRuntime(
+							fallback.id,
+							model,
+							stored?.revert ?? fallback.revert,
+							stored?.messages,
+						);
 						if (!runtimeEntry) {
 							return;
 						}
@@ -1316,12 +1323,28 @@ export function useSessionController(
 	}, []);
 
 	const showPreviousHistory = useCallback(() => {
-		dispatch({ type: "historyPrevious" });
-	}, []);
+		dispatch({
+			type: "historyPrevious",
+			committedMessages: getVisibleSessionMessages(
+				state.messages,
+				(activeSessionIdRef.current
+					? sessionsRef.current.get(activeSessionIdRef.current)?.revert
+					: null) ?? null,
+			),
+		});
+	}, [state.messages]);
 
 	const showNextHistory = useCallback(() => {
-		dispatch({ type: "historyNext" });
-	}, []);
+		dispatch({
+			type: "historyNext",
+			committedMessages: getVisibleSessionMessages(
+				state.messages,
+				(activeSessionIdRef.current
+					? sessionsRef.current.get(activeSessionIdRef.current)?.revert
+					: null) ?? null,
+			),
+		});
+	}, [state.messages]);
 
 	const submit = useCallback(
 		(raw: string) => {
@@ -1442,6 +1465,9 @@ export function useSessionController(
 					return;
 				}
 
+				cleanupRuntimeRevert(sessionId);
+				const beforeShellSnapshotId = services.workspaceSnapshotStore.track();
+
 				const ac = new AbortController();
 				entry.composerShellAbort = ac;
 
@@ -1482,7 +1508,16 @@ export function useSessionController(
 								sessionId,
 								currentRuntime.agent.state.messages,
 							);
-							captureAndStoreSessionHeadSnapshot(sessionId);
+						}
+						const shellPatch = services.workspaceSnapshotStore.patch(
+							beforeShellSnapshotId,
+						);
+						if (shellPatch.files.length > 0) {
+							services.sessionStore.addSessionPatch(sessionId, {
+								messageTimestamp: bashMessage.timestamp,
+								snapshotId: shellPatch.snapshotId,
+								files: shellPatch.files,
+							});
 							pruneUnreferencedSnapshots();
 						}
 						setCommandNotice(null);
@@ -1517,25 +1552,10 @@ export function useSessionController(
 				content: [{ type: "text", text }],
 				timestamp: Date.now(),
 			};
+			cleanupRuntimeRevert(runtime.sessionId);
 			const isFirstUserMessage = !runtime.agent.state.messages.some(
 				(message) => message.role === "user",
 			);
-
-			try {
-				const checkpointSnapshotId = services.workspaceSnapshotStore.capture();
-				services.sessionStore.setUserMessageCheckpoint(
-					runtime.sessionId,
-					userMessage.timestamp,
-					checkpointSnapshotId,
-				);
-				updateSessionHeadSnapshot(runtime.sessionId, checkpointSnapshotId);
-				pruneUnreferencedSnapshots();
-			} catch (error: unknown) {
-				setCommandNotice(
-					error instanceof Error ? error.message : String(error),
-				);
-				return;
-			}
 
 			setShowWelcomeScreen(false);
 			dispatch({ type: "promptSubmitted", message: userMessage });
@@ -1567,7 +1587,7 @@ export function useSessionController(
 				});
 		},
 		[
-			captureAndStoreSessionHeadSnapshot,
+			cleanupRuntimeRevert,
 			ensureActiveRuntime,
 			exitSession,
 			maybeAutoRenameSession,
@@ -1577,7 +1597,6 @@ export function useSessionController(
 			selectModel,
 			services,
 			syncRuntimeState,
-			updateSessionHeadSnapshot,
 		],
 	);
 
@@ -1635,9 +1654,22 @@ export function useSessionController(
 
 	useKeyboard(handleKeyboardInput);
 
+	const activeSessionEntry = activeSessionId
+		? sessionsRef.current.get(activeSessionId) ?? null
+		: null;
+	const activeSessionRevert = activeSessionEntry?.revert ?? null;
+	const visibleMessages = useMemo(
+		() => getVisibleSessionMessages(state.messages, activeSessionRevert),
+		[activeSessionRevert, state.messages],
+	);
+	const revertedUserMessages = useMemo(
+		() => getRevertedUserMessages(state.messages, activeSessionRevert),
+		[activeSessionRevert, state.messages],
+	);
+
 	const hasSubmittedUserMessages =
 		getSubmittedComposerHistory([
-			...state.messages,
+			...visibleMessages,
 			...state.pendingBashMessages,
 			...state.pendingUserMessages,
 		]).length > 0;
@@ -1646,22 +1678,22 @@ export function useSessionController(
 		() =>
 			buildSessionSidebarUsageLines(
 				activeModel,
-				[...state.messages, ...state.pendingBashMessages],
+				[...visibleMessages, ...state.pendingBashMessages],
 				state.streamingMessage,
 				activeModel ? services.modelRegistry.isUsingOAuth(activeModel) : false,
 			),
 		[
 			activeModel,
-			state.messages,
 			state.pendingBashMessages,
 			state.streamingMessage,
+			visibleMessages,
 			services.modelRegistry,
 		],
 	);
 
 	useEffect(() => {
 		let cancelled = false;
-		void buildSessionModifiedFiles(state.messages, services.workspaceRoot).then(
+		void buildSessionModifiedFiles(visibleMessages, services.workspaceRoot).then(
 			(rows) => {
 				if (!cancelled) {
 					setSessionSidebarModifiedFiles(rows);
@@ -1671,24 +1703,26 @@ export function useSessionController(
 		return () => {
 			cancelled = true;
 		};
-	}, [state.messages, services.workspaceRoot]);
+	}, [services.workspaceRoot, visibleMessages]);
 
 	const currentSessionTitle =
 		(activeSessionId
 			? sessionsRef.current.get(activeSessionId)?.title
 			: undefined) ?? DEFAULT_SESSION_TITLE;
+	const revertBannerState = activeSessionRevert
+		? {
+			hiddenUserMessageCount: revertedUserMessages.length,
+			diff: activeSessionRevert.diff,
+		}
+		: null;
 	const messageActionsState = activeMessageAction
 		? {
 			revertDisabledReason: activeMessageAction.isBusy
 				? "wait for the active session to finish"
-				: !activeMessageAction.checkpointSnapshotId
-					? "checkpoint data unavailable for this message"
-					: undefined,
+				: undefined,
 			forkDisabledReason: activeMessageAction.isBusy
 				? "wait for the active session to finish"
-				: !activeMessageAction.checkpointSnapshotId
-					? "checkpoint data unavailable for this message"
-					: undefined,
+				: undefined,
 		}
 		: null;
 
@@ -1807,6 +1841,20 @@ export function useSessionController(
 			}
 
 			if (currentPicker.kind === "sessions") {
+				const currentSessionId = activeSessionIdRef.current;
+				const currentEntry = currentSessionId
+					? sessionsRef.current.get(currentSessionId)
+					: null;
+				if (
+					currentEntry &&
+					(currentEntry.runtime.agent.state.isStreaming ||
+						Boolean(currentEntry.composerShellAbort))
+				) {
+					setCommandNotice(
+						"Wait for the active session to finish before switching sessions.",
+					);
+					return;
+				}
 				const existing = sessionsRef.current.get(itemId);
 				if (existing) {
 					setActiveModel(existing.runtime.agent.state.model);
@@ -1833,7 +1881,7 @@ export function useSessionController(
 				const entry = buildSessionRuntime(
 					itemId,
 					selectedModel ?? null,
-					stored.headSnapshotId,
+					stored.revert,
 					stored.messages,
 				);
 				if (!entry) {
@@ -1878,6 +1926,8 @@ export function useSessionController(
 
 	return {
 		state,
+		visibleMessages,
+		revertBannerState,
 		sessionSidebarUsage,
 		sessionSidebarModifiedFiles,
 		isNewSession: showWelcomeScreen,
@@ -1916,5 +1966,6 @@ export function useSessionController(
 		copyMessageFromActions,
 		forkSessionFromMessage,
 		revertSessionToMessage,
+		redoSessionRevert,
 	};
 }

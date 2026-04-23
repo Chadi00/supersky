@@ -12,8 +12,8 @@ import {
 
 export type SessionAction =
 	| { type: "draftChanged"; value: string }
-	| { type: "historyPrevious" }
-	| { type: "historyNext" }
+	| { type: "historyPrevious"; committedMessages?: AgentMessage[] }
+	| { type: "historyNext"; committedMessages?: AgentMessage[] }
 	| { type: "promptSubmitted"; message: UserMessage }
 	| {
 			type: "runtimeStateReplaced";
@@ -42,7 +42,7 @@ export function sessionReducer(
 	state: SessionState,
 	action: SessionAction,
 ): SessionState {
-	switch (action.type) {
+		switch (action.type) {
 		case "draftChanged": {
 			if (state.draft === action.value) {
 				return state;
@@ -56,7 +56,7 @@ export function sessionReducer(
 
 		case "historyPrevious": {
 			const historyEntries = getSubmittedComposerHistory([
-				...state.messages,
+				...(action.committedMessages ?? state.messages),
 				...state.pendingBashMessages,
 				...state.pendingUserMessages,
 			]);
@@ -97,7 +97,7 @@ export function sessionReducer(
 			}
 
 			const historyEntries = getSubmittedComposerHistory([
-				...state.messages,
+				...(action.committedMessages ?? state.messages),
 				...state.pendingBashMessages,
 				...state.pendingUserMessages,
 			]);

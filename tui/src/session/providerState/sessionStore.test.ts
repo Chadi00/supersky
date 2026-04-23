@@ -24,13 +24,13 @@ test("creates, lists, renames, and deletes sessions", () => {
 			title: "First",
 			workspaceRoot,
 			model: null,
-			headSnapshotId: "snap-1",
 		});
 		store.createSession({
 			id: "s-2",
 			title: "Second",
 			workspaceRoot,
 			model: null,
+			createdAt: Date.now() + 1,
 		});
 
 		expect(store.listSessions().map((session) => session.id)).toEqual([
@@ -39,7 +39,6 @@ test("creates, lists, renames, and deletes sessions", () => {
 		]);
 		store.updateSessionTitle("s-1", "Renamed");
 		expect(store.getSession("s-1")?.title).toBe("Renamed");
-		expect(store.getSession("s-1")?.headSnapshotId).toBe("snap-1");
 
 		store.deleteSession("s-2");
 		expect(store.getSession("s-2")).toBeNull();
@@ -92,30 +91,62 @@ test("persists and reloads full message transcripts", () => {
 	});
 });
 
-test("persists head snapshots and user message checkpoints", () => {
+test("persists revert state and session patches", () => {
 	withStore((store) => {
 		store.createSession({
 			id: "s-1",
 			title: "Transcript",
 			workspaceRoot,
 			model: null,
-			headSnapshotId: "snap-1",
 		});
 
-		store.updateSessionHeadSnapshot("s-1", "snap-2");
-		store.setUserMessageCheckpoint("s-1", 100, "snap-0");
-		store.setUserMessageCheckpoint("s-1", 200, "snap-1");
+		store.setSessionRevert("s-1", {
+			messageTimestamp: 200,
+			snapshotId: "snap-current",
+			diff: "diff text",
+		});
+		store.addSessionPatch("s-1", {
+			messageTimestamp: 100,
+			snapshotId: "snap-before-1",
+			files: ["a.txt"],
+		});
+		store.addSessionPatch("s-1", {
+			messageTimestamp: 200,
+			snapshotId: "snap-before-2",
+			files: ["a.txt", "b.txt"],
+		});
 
-		expect(store.getSession("s-1")?.headSnapshotId).toBe("snap-2");
-		expect(store.getUserMessageCheckpoint("s-1", 100)).toBe("snap-0");
-		expect(store.listUserMessageCheckpoints("s-1")).toEqual([
-			{ messageTimestamp: 100, snapshotId: "snap-0" },
-			{ messageTimestamp: 200, snapshotId: "snap-1" },
+		expect(store.getSession("s-1")?.revert).toEqual({
+			messageTimestamp: 200,
+			snapshotId: "snap-current",
+			diff: "diff text",
+		});
+		expect(store.listSessionPatches("s-1")).toEqual([
+			{
+				messageTimestamp: 100,
+				snapshotId: "snap-before-1",
+				files: ["a.txt"],
+			},
+			{
+				messageTimestamp: 200,
+				snapshotId: "snap-before-2",
+				files: ["a.txt", "b.txt"],
+			},
+		]);
+		expect(new Set(store.listReferencedSnapshotIds())).toEqual(
+			new Set(["snap-current", "snap-before-1", "snap-before-2"]),
+		);
+
+		store.deleteSessionPatchesFrom("s-1", 200);
+		expect(store.listSessionPatches("s-1")).toEqual([
+			{
+				messageTimestamp: 100,
+				snapshotId: "snap-before-1",
+				files: ["a.txt"],
+			},
 		]);
 
-		store.deleteUserMessageCheckpointsFrom("s-1", 200);
-		expect(store.listUserMessageCheckpoints("s-1")).toEqual([
-			{ messageTimestamp: 100, snapshotId: "snap-0" },
-		]);
+		store.setSessionRevert("s-1", null);
+		expect(store.getSession("s-1")?.revert).toBeNull();
 	});
 });

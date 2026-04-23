@@ -11,6 +11,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { dirname, join, relative } from "node:path";
+import { createPatch } from "diff";
 
 import { getWorkspaceDir } from "./paths";
 
@@ -24,9 +25,17 @@ type SnapshotManifest = {
 	files: SnapshotManifestFile[];
 };
 
+export type WorkspaceSnapshotPatch = {
+	snapshotId: string;
+	files: string[];
+};
+
 export interface WorkspaceSnapshotStoreLike {
-	capture(): string;
+	track(): string;
+	patch(snapshotId: string): WorkspaceSnapshotPatch;
 	restore(snapshotId: string): void;
+	revert(patches: WorkspaceSnapshotPatch[]): void;
+	diff(snapshotId: string): string;
 	has(snapshotId: string): boolean;
 	pruneReferencedSnapshotIds(snapshotIds: Iterable<string>): void;
 }
@@ -40,6 +49,12 @@ type WorkspaceFile = {
 	absolutePath: string;
 	relativePath: string;
 	mode: number;
+};
+
+type SnapshotFile = {
+	path: string;
+	mode: number;
+	content: string;
 };
 
 function getSnapshotsDir(workspaceRoot: string) {
@@ -124,19 +139,71 @@ function readManifest(filePath: string) {
 	return JSON.parse(readFileSync(filePath, "utf8")) as SnapshotManifest;
 }
 
+function readFileIfExists(filePath: string) {
+	try {
+		return readFileSync(filePath, "utf8");
+	} catch {
+		return null;
+	}
+}
+
+function createSnapshotPatchText(path: string, before: string, after: string) {
+	return createPatch(path, before, after, "before", "after");
+}
+
 export class WorkspaceSnapshotStore implements WorkspaceSnapshotStoreLike {
 	private snapshotsDir: string;
 
-	constructor(private workspaceRoot: string, snapshotsDir = getSnapshotsDir(workspaceRoot)) {
+	constructor(workspaceRoot: string, snapshotsDir = getSnapshotsDir(workspaceRoot)) {
+		this.workspaceRoot = workspaceRoot;
 		this.snapshotsDir = snapshotsDir;
 	}
+
+	private workspaceRoot: string;
 
 	private getSnapshotDir(snapshotId: string) {
 		return join(this.snapshotsDir, snapshotId);
 	}
 
+	private getFilesDir(snapshotId: string) {
+		return join(this.getSnapshotDir(snapshotId), "files");
+	}
+
 	private getManifestPath(snapshotId: string) {
 		return join(this.getSnapshotDir(snapshotId), "manifest.json");
+	}
+
+	private listSnapshotFiles(snapshotId: string) {
+		const manifestPath = this.getManifestPath(snapshotId);
+		if (!existsSync(manifestPath)) {
+			throw new Error(`Snapshot not found: ${snapshotId}`);
+		}
+		const manifest = readManifest(manifestPath);
+		const filesDir = this.getFilesDir(snapshotId);
+		const result = new Map<string, SnapshotFile>();
+		for (const file of manifest.files) {
+			result.set(file.path, {
+				path: file.path,
+				mode: file.mode,
+				content: readFileSync(join(filesDir, file.path), "utf8"),
+			});
+		}
+		return result;
+	}
+
+	private restoreSingleFile(snapshotId: string, relativePath: string) {
+		const snapshotFiles = this.listSnapshotFiles(snapshotId);
+		const snapshotFile = snapshotFiles.get(relativePath);
+		const destinationPath = join(this.workspaceRoot, relativePath);
+		if (!snapshotFile) {
+			rmSync(destinationPath, { force: true });
+			return;
+		}
+
+		const sourcePath = join(this.getFilesDir(snapshotId), relativePath);
+		mkdirSync(dirname(destinationPath), { recursive: true, mode: 0o700 });
+		copyFileSync(sourcePath, destinationPath);
+		chmodSync(destinationPath, snapshotFile.mode);
 	}
 
 	has(snapshotId: string) {
@@ -157,10 +224,10 @@ export class WorkspaceSnapshotStore implements WorkspaceSnapshotStoreLike {
 		}
 	}
 
-	capture() {
+	track() {
 		const snapshotId = randomUUID();
 		const snapshotDir = this.getSnapshotDir(snapshotId);
-		const filesDir = join(snapshotDir, "files");
+		const filesDir = this.getFilesDir(snapshotId);
 		const files = listWorkspaceFiles(this.workspaceRoot);
 
 		mkdirSync(filesDir, { recursive: true, mode: 0o700 });
@@ -191,9 +258,41 @@ export class WorkspaceSnapshotStore implements WorkspaceSnapshotStoreLike {
 		return snapshotId;
 	}
 
+	patch(snapshotId: string) {
+		const snapshotFiles = this.listSnapshotFiles(snapshotId);
+		const currentFiles = listWorkspaceFiles(this.workspaceRoot);
+		const currentByPath = new Map(
+			currentFiles.map((file) => [file.relativePath, file] as const),
+		);
+		const paths = new Set<string>([
+			...snapshotFiles.keys(),
+			...currentByPath.keys(),
+		]);
+
+		const files = [...paths]
+			.filter((relativePath) => {
+				const snapshotFile = snapshotFiles.get(relativePath);
+				const currentFile = currentByPath.get(relativePath);
+				if (!snapshotFile || !currentFile) {
+					return true;
+				}
+				const currentContent = readFileSync(currentFile.absolutePath, "utf8");
+				return (
+					snapshotFile.content !== currentContent ||
+					snapshotFile.mode !== currentFile.mode
+				);
+			})
+			.toSorted((left, right) => left.localeCompare(right));
+
+		return {
+			snapshotId,
+			files,
+		};
+	}
+
 	restore(snapshotId: string) {
 		const snapshotDir = this.getSnapshotDir(snapshotId);
-		const filesDir = join(snapshotDir, "files");
+		const filesDir = this.getFilesDir(snapshotId);
 		const manifestPath = this.getManifestPath(snapshotId);
 		if (!existsSync(manifestPath)) {
 			throw new Error(`Snapshot not found: ${snapshotId}`);
@@ -217,6 +316,53 @@ export class WorkspaceSnapshotStore implements WorkspaceSnapshotStoreLike {
 			copyFileSync(sourcePath, destinationPath);
 			chmodSync(destinationPath, file.mode);
 		}
+	}
+
+	revert(patches: WorkspaceSnapshotPatch[]) {
+		const restored = new Set<string>();
+		for (const patch of patches) {
+			for (const relativePath of patch.files) {
+				if (restored.has(relativePath)) {
+					continue;
+				}
+				restored.add(relativePath);
+				this.restoreSingleFile(patch.snapshotId, relativePath);
+			}
+		}
+	}
+
+	diff(snapshotId: string) {
+		const snapshotFiles = this.listSnapshotFiles(snapshotId);
+		const currentFiles = listWorkspaceFiles(this.workspaceRoot);
+		const currentByPath = new Map(
+			currentFiles.map((file) => [file.relativePath, file] as const),
+		);
+		const paths = new Set<string>([
+			...snapshotFiles.keys(),
+			...currentByPath.keys(),
+		]);
+
+		const patches: string[] = [];
+		for (const relativePath of [...paths].toSorted((left, right) => left.localeCompare(right))) {
+			const snapshotFile = snapshotFiles.get(relativePath);
+			const currentFile = currentByPath.get(relativePath);
+			const before = snapshotFile?.content ?? "";
+			const after = currentFile ? readFileIfExists(currentFile.absolutePath) ?? "" : "";
+			const beforeExists = Boolean(snapshotFile);
+			const afterExists = Boolean(currentFile);
+
+			if (
+				beforeExists === afterExists &&
+				before === after &&
+				snapshotFile?.mode === currentFile?.mode
+			) {
+				continue;
+			}
+
+			patches.push(createSnapshotPatchText(relativePath, before, after));
+		}
+
+		return patches.join("\n").trim();
 	}
 }
 

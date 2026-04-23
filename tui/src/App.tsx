@@ -11,7 +11,9 @@ import { LoginDialog } from "./session/LoginDialog";
 import { MessageActionsDialog } from "./session/MessageActionsDialog";
 import { deriveSessionLayout } from "./session/layout";
 import { MessageList } from "./session/MessageList";
+import { getRevertDiffFiles } from "./session/revertDiff";
 import type { SessionServices } from "./session/providerState/services";
+import { SessionRevertBanner } from "./session/SessionRevertBanner";
 import { SessionPickerDialog } from "./session/SessionPickerDialog";
 import { SessionRenameDialog } from "./session/SessionRenameDialog";
 import { SessionSidebar } from "./session/SessionSidebar";
@@ -39,6 +41,8 @@ function AppContent({ projectLine, services, initialSessionId }: AppProps) {
 	const toast = useToast();
 	const {
 		state,
+		visibleMessages,
+		revertBannerState,
 		sessionSidebarUsage,
 		sessionSidebarModifiedFiles,
 		isNewSession,
@@ -76,6 +80,7 @@ function AppContent({ projectLine, services, initialSessionId }: AppProps) {
 		copyMessageFromActions,
 		forkSessionFromMessage,
 		revertSessionToMessage,
+		redoSessionRevert,
 	} = useSessionController(services, initialSessionId ?? null);
 	const layout = deriveSessionLayout(width, isNewSession);
 	const composerRef = useRef<ComposerHandle>(null);
@@ -99,6 +104,9 @@ function AppContent({ projectLine, services, initialSessionId }: AppProps) {
 	const focusComposer = useCallback(() => {
 		composerRef.current?.focus();
 	}, []);
+	const revertDiffFiles = revertBannerState
+		? getRevertDiffFiles(revertBannerState.diff)
+		: [];
 
 	useEffect(() => {
 		renderer.console.onCopySelection = (text: string) => {
@@ -191,7 +199,7 @@ function AppContent({ projectLine, services, initialSessionId }: AppProps) {
 							onMouseDown={focusComposer}
 						>
 							<MessageList
-								messages={state.messages}
+								messages={visibleMessages}
 								pendingBashMessages={state.pendingBashMessages}
 								pendingUserMessages={state.pendingUserMessages}
 								streamingMessage={state.streamingMessage}
@@ -201,6 +209,18 @@ function AppContent({ projectLine, services, initialSessionId }: AppProps) {
 								onMouseDown={focusComposer}
 								onUserMessageMouseUp={handleUserMessageMouseUp}
 							/>
+
+							{revertBannerState ? (
+								<box paddingTop={1} flexShrink={0}>
+									<SessionRevertBanner
+										hiddenUserMessageCount={
+											revertBannerState.hiddenUserMessageCount
+										}
+										files={revertDiffFiles}
+										onRedo={redoSessionRevert}
+									/>
+								</box>
+							) : null}
 
 							<box paddingTop={0} flexShrink={0}>
 								<Composer
