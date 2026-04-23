@@ -13,6 +13,12 @@ type SessionRow = {
 	model_provider: string | null;
 	model_id: string | null;
 	workspace_root: string;
+	head_snapshot_id: string | null;
+};
+
+type UserMessageCheckpointRow = {
+	message_timestamp: number;
+	snapshot_id: string;
 };
 
 export type SessionSummary = {
@@ -23,6 +29,7 @@ export type SessionSummary = {
 	modelProvider: string | null;
 	modelId: string | null;
 	workspaceRoot: string;
+	headSnapshotId: string | null;
 };
 
 export type StoredSession = SessionSummary & {
@@ -37,11 +44,25 @@ export interface SessionStoreLike {
 		title: string;
 		workspaceRoot: string;
 		model: Model<Api> | null;
+		headSnapshotId?: string | null;
 		createdAt?: number;
 	}): SessionSummary;
 	updateSessionTitle(sessionId: string, title: string): void;
 	updateSessionModel(sessionId: string, model: Model<Api> | null): void;
+	updateSessionHeadSnapshot(sessionId: string, snapshotId: string | null): void;
 	replaceSessionMessages(sessionId: string, messages: AgentMessage[]): void;
+	setUserMessageCheckpoint(
+		sessionId: string,
+		messageTimestamp: number,
+		snapshotId: string,
+	): void;
+	getUserMessageCheckpoint(sessionId: string, messageTimestamp: number): string | null;
+	listUserMessageCheckpoints(sessionId: string): Array<{
+		messageTimestamp: number;
+		snapshotId: string;
+	}>;
+	deleteUserMessageCheckpointsFrom(sessionId: string, messageTimestamp: number): void;
+	listReferencedSnapshotIds(): string[];
 	deleteSession(sessionId: string): void;
 	getLastActiveSessionId(): string | null;
 	setLastActiveSessionId(sessionId: string | null): void;
@@ -56,6 +77,7 @@ function mapSessionRow(row: SessionRow): SessionSummary {
 		modelProvider: row.model_provider,
 		modelId: row.model_id,
 		workspaceRoot: row.workspace_root,
+		headSnapshotId: row.head_snapshot_id,
 	};
 }
 
@@ -82,7 +104,8 @@ export class SessionStore implements SessionStoreLike {
 				updated_at INTEGER NOT NULL,
 				model_provider TEXT,
 				model_id TEXT,
-				workspace_root TEXT NOT NULL
+				workspace_root TEXT NOT NULL,
+				head_snapshot_id TEXT
 			);
 			CREATE TABLE IF NOT EXISTS message (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -92,15 +115,30 @@ export class SessionStore implements SessionStoreLike {
 				UNIQUE(session_id, seq),
 				FOREIGN KEY(session_id) REFERENCES session(id) ON DELETE CASCADE
 			);
+			CREATE TABLE IF NOT EXISTS user_message_checkpoint (
+				session_id TEXT NOT NULL,
+				message_timestamp INTEGER NOT NULL,
+				snapshot_id TEXT NOT NULL,
+				PRIMARY KEY(session_id, message_timestamp),
+				FOREIGN KEY(session_id) REFERENCES session(id) ON DELETE CASCADE
+			);
 			CREATE INDEX IF NOT EXISTS message_session_seq_idx ON message(session_id, seq);
 			CREATE INDEX IF NOT EXISTS session_updated_at_idx ON session(updated_at);
 		`);
+		const columns = this.db
+			.query("PRAGMA table_info(session)")
+			.all() as Array<{ name: string }>;
+		if (!columns.some((column) => column.name === "head_snapshot_id")) {
+			this.db
+				.query("ALTER TABLE session ADD COLUMN head_snapshot_id TEXT")
+				.run();
+		}
 	}
 
 	listSessions(limit = 200): SessionSummary[] {
 		const rows = this.db
 			.query(
-				`SELECT id, title, created_at, updated_at, model_provider, model_id, workspace_root
+				`SELECT id, title, created_at, updated_at, model_provider, model_id, workspace_root, head_snapshot_id
 				 FROM session
 				 ORDER BY updated_at DESC
 				 LIMIT ?`,
@@ -112,7 +150,7 @@ export class SessionStore implements SessionStoreLike {
 	getSession(sessionId: string): StoredSession | null {
 		const row = this.db
 			.query(
-				`SELECT id, title, created_at, updated_at, model_provider, model_id, workspace_root
+				`SELECT id, title, created_at, updated_at, model_provider, model_id, workspace_root, head_snapshot_id
 				 FROM session
 				 WHERE id = ?`,
 			)
@@ -136,14 +174,15 @@ export class SessionStore implements SessionStoreLike {
 		title: string;
 		workspaceRoot: string;
 		model: Model<Api> | null;
+		headSnapshotId?: string | null;
 		createdAt?: number;
 	}): SessionSummary {
 		const createdAt = input.createdAt ?? Date.now();
 		this.db
 			.query(
 				`INSERT INTO session (
-					id, title, created_at, updated_at, model_provider, model_id, workspace_root
-				) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+					id, title, created_at, updated_at, model_provider, model_id, workspace_root, head_snapshot_id
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 			)
 			.run(
 				input.id,
@@ -153,6 +192,7 @@ export class SessionStore implements SessionStoreLike {
 				input.model?.provider ?? null,
 				input.model?.id ?? null,
 				input.workspaceRoot,
+				input.headSnapshotId ?? null,
 			);
 		return {
 			id: input.id,
@@ -162,6 +202,7 @@ export class SessionStore implements SessionStoreLike {
 			modelProvider: input.model?.provider ?? null,
 			modelId: input.model?.id ?? null,
 			workspaceRoot: input.workspaceRoot,
+			headSnapshotId: input.headSnapshotId ?? null,
 		};
 	}
 
@@ -177,6 +218,14 @@ export class SessionStore implements SessionStoreLike {
 				"UPDATE session SET model_provider = ?, model_id = ?, updated_at = ? WHERE id = ?",
 			)
 			.run(model?.provider ?? null, model?.id ?? null, Date.now(), sessionId);
+	}
+
+	updateSessionHeadSnapshot(sessionId: string, snapshotId: string | null) {
+		this.db
+			.query(
+				"UPDATE session SET head_snapshot_id = ?, updated_at = ? WHERE id = ?",
+			)
+			.run(snapshotId, Date.now(), sessionId);
 	}
 
 	replaceSessionMessages(sessionId: string, messages: AgentMessage[]) {
@@ -196,6 +245,67 @@ export class SessionStore implements SessionStoreLike {
 			},
 		);
 		transaction(sessionId, messages);
+	}
+
+	setUserMessageCheckpoint(
+		sessionId: string,
+		messageTimestamp: number,
+		snapshotId: string,
+	) {
+		this.db
+			.query(
+				`INSERT INTO user_message_checkpoint (session_id, message_timestamp, snapshot_id)
+				 VALUES (?, ?, ?)
+				 ON CONFLICT(session_id, message_timestamp)
+				 DO UPDATE SET snapshot_id = excluded.snapshot_id`,
+			)
+			.run(sessionId, messageTimestamp, snapshotId);
+	}
+
+	getUserMessageCheckpoint(sessionId: string, messageTimestamp: number) {
+		const row = this.db
+			.query(
+				`SELECT snapshot_id
+				 FROM user_message_checkpoint
+				 WHERE session_id = ? AND message_timestamp = ?`,
+			)
+			.get(sessionId, messageTimestamp) as { snapshot_id: string } | null;
+		return row?.snapshot_id ?? null;
+	}
+
+	listUserMessageCheckpoints(sessionId: string) {
+		const rows = this.db
+			.query(
+				`SELECT message_timestamp, snapshot_id
+				 FROM user_message_checkpoint
+				 WHERE session_id = ?
+				 ORDER BY message_timestamp ASC`,
+			)
+			.all(sessionId) as UserMessageCheckpointRow[];
+		return rows.map((row) => ({
+			messageTimestamp: row.message_timestamp,
+			snapshotId: row.snapshot_id,
+		}));
+	}
+
+	deleteUserMessageCheckpointsFrom(sessionId: string, messageTimestamp: number) {
+		this.db
+			.query(
+				`DELETE FROM user_message_checkpoint
+				 WHERE session_id = ? AND message_timestamp >= ?`,
+			)
+			.run(sessionId, messageTimestamp);
+	}
+
+	listReferencedSnapshotIds() {
+		const rows = this.db
+			.query(
+				`SELECT head_snapshot_id AS snapshot_id FROM session WHERE head_snapshot_id IS NOT NULL
+				 UNION
+				 SELECT snapshot_id FROM user_message_checkpoint`,
+			)
+			.all() as Array<{ snapshot_id: string }>;
+		return rows.map((row) => row.snapshot_id);
 	}
 
 	deleteSession(sessionId: string) {

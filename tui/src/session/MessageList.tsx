@@ -6,6 +6,7 @@ import type { SuperskyToolDefinition } from "../agent/tools/types";
 import { colors } from "../shared/theme";
 import { formatMessageTimestamp } from "../shared/time";
 import type { ToolResultMessage } from "../vendor/pi-ai/index.js";
+import type { UserMessage } from "../vendor/pi-ai/index.js";
 import {
 	AssistantMessage,
 	AssistantStreamingIndicator,
@@ -29,7 +30,12 @@ type MessageListProps = {
 		Pick<SuperskyToolDefinition, "icon" | "formatCall">
 	>;
 	onMouseDown?: () => void;
+	onUserMessageMouseUp?: (message: UserMessage) => void;
 };
+
+export function getUserMessageRowId(message: UserMessage) {
+	return `user-message-${message.timestamp}`;
+}
 
 export function MessageList({
 	messages,
@@ -40,6 +46,7 @@ export function MessageList({
 	toolExecutions,
 	toolDefinitions,
 	onMouseDown,
+	onUserMessageMouseUp,
 }: MessageListProps) {
 	const setMessagesScrollRef = useCallback(
 		(node: ScrollBoxRenderable | null) => {
@@ -147,8 +154,19 @@ export function MessageList({
 	) => (
 		<box
 			key={`${keyPrefix}-${message.timestamp}-${getUserMessageText(message).slice(0, 24)}`}
+			id={keyPrefix === "user" ? getUserMessageRowId(message) : undefined}
 			flexDirection="column"
 			marginBottom={1}
+			onMouseUp={
+				keyPrefix === "user"
+					? (event) => {
+						if (event.button !== 0) {
+							return;
+						}
+						onUserMessageMouseUp?.(message);
+					}
+					: undefined
+			}
 		>
 			<box
 				backgroundColor={colors.userMessageBackground}

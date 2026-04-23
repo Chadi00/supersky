@@ -1,3 +1,6 @@
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { convertSuperskyAgentMessagesToLlm } from "../agent/bashExecutionTypes";
 import type { AgentRuntimeLike } from "../agent/runtime";
 import { buildSystemPrompt } from "../agent/systemPrompt";
@@ -22,6 +25,7 @@ import type {
 	StoredSession,
 } from "../session/providerState/sessionStore";
 import type { SettingsManagerLike } from "../session/providerState/settingsManager";
+import { createWorkspaceSnapshotStore } from "../session/providerState/workspaceSnapshotStore";
 import type { AgentMessage } from "../vendor/pi-agent-core/index.js";
 import { Agent } from "../vendor/pi-agent-core/index.js";
 import { createAssistantMessageEventStream } from "../vendor/pi-ai/index.js";
@@ -54,22 +58,25 @@ function createModel(provider: string, id: string, name: string): Model<Api> {
 }
 
 class FakeAgentRuntime implements AgentRuntimeLike {
-	readonly cwd = process.cwd();
-	readonly toolDefinitions = createBuiltInTools(process.cwd()).definitions;
+	readonly cwd: string;
+	readonly toolDefinitions: ReturnType<typeof createBuiltInTools>["definitions"];
 	readonly agent: Agent;
 	readonly sessionId: string;
 
 	constructor(
 		model: Model<Api>,
+		cwd: string,
 		sessionId: string,
 		initialMessages: AgentMessage[] = [],
 	) {
+		this.cwd = cwd;
 		this.sessionId = sessionId;
-		const tools = createBuiltInTools(process.cwd());
+		const tools = createBuiltInTools(cwd);
+		this.toolDefinitions = tools.definitions;
 		this.agent = new Agent({
 			initialState: {
 				systemPrompt: buildSystemPrompt({
-					cwd: process.cwd(),
+					cwd,
 					date: "2026-04-22",
 					tools: Object.values(tools.definitions),
 				}),
@@ -362,6 +369,7 @@ class FakeModelRegistry implements ModelRegistryLike {
 
 class FakeSessionStore implements SessionStoreLike {
 	private sessions = new Map<string, StoredSession>();
+	private checkpoints = new Map<string, Map<number, string>>();
 	private lastActiveSessionId: string | null = null;
 
 	listSessions() {
@@ -375,6 +383,7 @@ class FakeSessionStore implements SessionStoreLike {
 					modelProvider: session.modelProvider,
 					modelId: session.modelId,
 					workspaceRoot: session.workspaceRoot,
+					headSnapshotId: session.headSnapshotId,
 				}),
 			)
 			.sort((a, b) => b.updatedAt - a.updatedAt);
@@ -389,6 +398,7 @@ class FakeSessionStore implements SessionStoreLike {
 		title: string;
 		workspaceRoot: string;
 		model: Model<Api> | null;
+		headSnapshotId?: string | null;
 		createdAt?: number;
 	}) {
 		const now = input.createdAt ?? Date.now();
@@ -400,6 +410,7 @@ class FakeSessionStore implements SessionStoreLike {
 			modelProvider: input.model?.provider ?? null,
 			modelId: input.model?.id ?? null,
 			workspaceRoot: input.workspaceRoot,
+			headSnapshotId: input.headSnapshotId ?? null,
 			messages: [],
 		};
 		this.sessions.set(input.id, session);
@@ -411,6 +422,7 @@ class FakeSessionStore implements SessionStoreLike {
 			modelProvider: session.modelProvider,
 			modelId: session.modelId,
 			workspaceRoot: session.workspaceRoot,
+			headSnapshotId: session.headSnapshotId,
 		};
 	}
 
@@ -429,6 +441,13 @@ class FakeSessionStore implements SessionStoreLike {
 		session.updatedAt = Date.now();
 	}
 
+	updateSessionHeadSnapshot(sessionId: string, snapshotId: string | null) {
+		const session = this.sessions.get(sessionId);
+		if (!session) return;
+		session.headSnapshotId = snapshotId;
+		session.updatedAt = Date.now();
+	}
+
 	replaceSessionMessages(sessionId: string, messages: AgentMessage[]) {
 		const session = this.sessions.get(sessionId);
 		if (!session) return;
@@ -436,8 +455,60 @@ class FakeSessionStore implements SessionStoreLike {
 		session.updatedAt = Date.now();
 	}
 
+	setUserMessageCheckpoint(
+		sessionId: string,
+		messageTimestamp: number,
+		snapshotId: string,
+	) {
+		const checkpoints =
+			this.checkpoints.get(sessionId) ?? new Map<number, string>();
+		checkpoints.set(messageTimestamp, snapshotId);
+		this.checkpoints.set(sessionId, checkpoints);
+	}
+
+	getUserMessageCheckpoint(sessionId: string, messageTimestamp: number) {
+		return this.checkpoints.get(sessionId)?.get(messageTimestamp) ?? null;
+	}
+
+	listUserMessageCheckpoints(sessionId: string) {
+		return [...(this.checkpoints.get(sessionId)?.entries() ?? [])]
+			.sort((left, right) => left[0] - right[0])
+			.map(([messageTimestamp, snapshotId]) => ({
+				messageTimestamp,
+				snapshotId,
+			}));
+	}
+
+	deleteUserMessageCheckpointsFrom(sessionId: string, messageTimestamp: number) {
+		const checkpoints = this.checkpoints.get(sessionId);
+		if (!checkpoints) {
+			return;
+		}
+		for (const timestamp of checkpoints.keys()) {
+			if (timestamp >= messageTimestamp) {
+				checkpoints.delete(timestamp);
+			}
+		}
+	}
+
+	listReferencedSnapshotIds() {
+		const snapshotIds = new Set<string>();
+		for (const session of this.sessions.values()) {
+			if (session.headSnapshotId) {
+				snapshotIds.add(session.headSnapshotId);
+			}
+		}
+		for (const checkpoints of this.checkpoints.values()) {
+			for (const snapshotId of checkpoints.values()) {
+				snapshotIds.add(snapshotId);
+			}
+		}
+		return [...snapshotIds];
+	}
+
 	deleteSession(sessionId: string) {
 		this.sessions.delete(sessionId);
+		this.checkpoints.delete(sessionId);
 		if (this.lastActiveSessionId === sessionId) {
 			this.lastActiveSessionId = null;
 		}
@@ -456,6 +527,8 @@ export function createFakeSessionServices(options?: {
 	providerSpecs?: FakeProviderSpec[];
 	models?: Model<Api>[];
 	generateSessionTitle?: SessionServices["generateSessionTitle"];
+	workspaceRoot?: string;
+	snapshotsDir?: string;
 }) {
 	const authStorage = new FakeAuthStorage(
 		options?.providerSpecs ?? defaultProviderSpecs,
@@ -466,13 +539,21 @@ export function createFakeSessionServices(options?: {
 		options?.models ?? fakeModels,
 	);
 	const sessionStore = new FakeSessionStore();
+	const workspaceRoot = options?.workspaceRoot ?? process.cwd();
+	const workspaceSnapshotStore = createWorkspaceSnapshotStore({
+		workspaceRoot,
+		snapshotsDir:
+			options?.snapshotsDir ??
+			join(tmpdir(), `supersky-fake-snapshots-${randomUUID()}`),
+	});
 
 	return {
 		authStorage,
 		settingsManager,
 		modelRegistry,
 		sessionStore,
-		workspaceRoot: process.cwd(),
+		workspaceSnapshotStore,
+		workspaceRoot,
 		createRuntime: (model, options) => {
 			const fallbackModel = fakeModels[0];
 			if (!fallbackModel) {
@@ -480,6 +561,7 @@ export function createFakeSessionServices(options?: {
 			}
 			return new FakeAgentRuntime(
 				model ?? fallbackModel,
+				workspaceRoot,
 				options?.sessionId ?? `fake-session-${Date.now()}`,
 				options?.initialMessages,
 			);

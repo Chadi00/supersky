@@ -60,6 +60,7 @@ import { sessionReducer } from "./sessionReducer";
 import {
 	createInitialSessionState,
 	getSubmittedComposerHistory,
+	getUserMessageText,
 	type ToolExecutionState,
 } from "./types";
 
@@ -73,9 +74,15 @@ type PendingLoginInput = {
 	reject: (error: Error) => void;
 };
 
+type MessageActionTarget = {
+	timestamp: number;
+	text: string;
+};
+
 type SessionRuntimeEntry = {
 	id: string;
 	title: string;
+	headSnapshotId: string | null;
 	runtime: AgentRuntimeLike;
 	toolExecutions: Map<string, ToolExecutionState>;
 	pendingBashMessages: BashExecutionMessage[];
@@ -226,6 +233,8 @@ export function useSessionController(
 	const [pendingDeleteSessionId, setPendingDeleteSessionId] = useState<
 		string | null
 	>(null);
+	const [messageActionTarget, setMessageActionTarget] =
+		useState<MessageActionTarget | null>(null);
 	const [sessionRenameDialogState, setSessionRenameDialogState] =
 		useState<SessionRenameDialogState | null>(null);
 	const [loginDialogState, setLoginDialogState] =
@@ -282,10 +291,66 @@ export function useSessionController(
 		});
 	}, []);
 
+	const setDraft = useCallback((value: string) => {
+		if (value) {
+			setCommandNotice(null);
+		}
+
+		dispatch({ type: "draftChanged", value });
+	}, []);
+
+	const findUserMessageIndex = useCallback(
+		(messages: AgentMessage[], target: MessageActionTarget) =>
+			messages.findIndex(
+				(message) =>
+					message.role === "user" &&
+					message.timestamp === target.timestamp &&
+					getUserMessageText(message) === target.text,
+			),
+		[],
+	);
+
+	const updateSessionHeadSnapshot = useCallback(
+		(sessionId: string, snapshotId: string | null) => {
+			services.sessionStore.updateSessionHeadSnapshot(sessionId, snapshotId);
+			const entry = sessionsRef.current.get(sessionId);
+			if (entry) {
+				entry.headSnapshotId = snapshotId;
+			}
+		},
+		[services],
+	);
+
+	const captureAndStoreSessionHeadSnapshot = useCallback(
+		(sessionId: string) => {
+			const snapshotId = services.workspaceSnapshotStore.capture();
+			updateSessionHeadSnapshot(sessionId, snapshotId);
+			return snapshotId;
+		},
+		[services, updateSessionHeadSnapshot],
+	);
+
+	const restoreSessionWorkspace = useCallback(
+		(snapshotId: string | null) => {
+			if (!snapshotId) {
+				return;
+			}
+			services.workspaceSnapshotStore.restore(snapshotId);
+		},
+		[services],
+	);
+
+	const pruneUnreferencedSnapshots = useCallback(() => {
+		services.workspaceSnapshotStore.pruneReferencedSnapshotIds(
+			services.sessionStore.listReferencedSnapshotIds(),
+		);
+	}, [services]);
+
 	const buildSessionRuntime = useCallback(
 		(
 			sessionId: string,
 			model: Model<Api> | null,
+			headSnapshotId: string | null,
 			initialMessages?: AgentMessage[],
 		) => {
 			const runtime =
@@ -296,6 +361,7 @@ export function useSessionController(
 				(model
 					? new SuperskyAgentRuntime({
 							authStorage: services.authStorage,
+							cwd: services.workspaceRoot,
 							model,
 							sessionId,
 							initialMessages: initialMessages ?? [],
@@ -306,7 +372,8 @@ export function useSessionController(
 			}
 			const toolExecutions = new Map<string, ToolExecutionState>();
 			const unsubscribe = runtime.subscribe((event: AgentEvent) => {
-				switch (event.type) {
+				try {
+					switch (event.type) {
 					case "tool_execution_start": {
 						const previous = toolExecutions.get(event.toolCallId);
 						toolExecutions.set(event.toolCallId, {
@@ -350,22 +417,30 @@ export function useSessionController(
 							}
 							entry.pendingBashMessages = [];
 						}
+						captureAndStoreSessionHeadSnapshot(sessionId);
+						pruneUnreferencedSnapshots();
 						break;
 					}
-				}
-				const entry = sessionsRef.current.get(sessionId);
-				if (!entry) return;
-				services.sessionStore.replaceSessionMessages(
-					sessionId,
-					runtime.agent.state.messages,
-				);
-				if (activeSessionIdRef.current === sessionId) {
-					syncRuntimeState();
+					}
+					const entry = sessionsRef.current.get(sessionId);
+					if (!entry) return;
+					services.sessionStore.replaceSessionMessages(
+						sessionId,
+						runtime.agent.state.messages,
+					);
+					if (activeSessionIdRef.current === sessionId) {
+						syncRuntimeState();
+					}
+				} catch (error: unknown) {
+					setCommandNotice(
+						error instanceof Error ? error.message : String(error),
+					);
 				}
 			});
 			const entry: SessionRuntimeEntry = {
 				id: sessionId,
 				title: "New session",
+				headSnapshotId,
 				runtime,
 				toolExecutions,
 				pendingBashMessages: [],
@@ -375,27 +450,65 @@ export function useSessionController(
 			sessionsRef.current.set(sessionId, entry);
 			return entry;
 		},
-		[services, syncRuntimeState],
+		[
+			captureAndStoreSessionHeadSnapshot,
+			pruneUnreferencedSnapshots,
+			services,
+			syncRuntimeState,
+		],
 	);
 
 	const activateSession = useCallback(
 		(sessionId: string) => {
 			const entry = sessionsRef.current.get(sessionId);
 			if (!entry) return null;
+			setMessageActionTarget(null);
 			runtimeRef.current = entry.runtime;
 			setActiveSessionId(sessionId);
 			setShowWelcomeScreen(false);
 			services.sessionStore.setLastActiveSessionId(sessionId);
+			if (
+				entry.headSnapshotId &&
+				!services.workspaceSnapshotStore.has(entry.headSnapshotId)
+			) {
+				updateSessionHeadSnapshot(sessionId, null);
+				pruneUnreferencedSnapshots();
+				setCommandNotice("Saved workspace snapshot is unavailable for this session.");
+			} else {
+				try {
+					restoreSessionWorkspace(entry.headSnapshotId);
+				} catch (error: unknown) {
+					updateSessionHeadSnapshot(sessionId, null);
+					pruneUnreferencedSnapshots();
+					setCommandNotice(
+						error instanceof Error ? error.message : String(error),
+					);
+				}
+			}
 			syncRuntimeState();
 			return entry.runtime;
 		},
-		[services, syncRuntimeState],
+		[
+			pruneUnreferencedSnapshots,
+			restoreSessionWorkspace,
+			services,
+			syncRuntimeState,
+			updateSessionHeadSnapshot,
+		],
 	);
 
 	const createAndActivateSession = useCallback(
-		(model: Model<Api> | null) => {
+		(
+			model: Model<Api> | null,
+			options?: { headSnapshotId?: string | null; initialMessages?: AgentMessage[] },
+		) => {
 			const sessionId = crypto.randomUUID();
-			const entry = buildSessionRuntime(sessionId, model);
+			const entry = buildSessionRuntime(
+				sessionId,
+				model,
+				options?.headSnapshotId ?? null,
+				options?.initialMessages,
+			);
 			if (!entry) {
 				return null;
 			}
@@ -404,6 +517,7 @@ export function useSessionController(
 				title: "New session",
 				workspaceRoot: services.workspaceRoot,
 				model,
+				headSnapshotId: options?.headSnapshotId ?? null,
 			});
 			activateSession(sessionId);
 			return entry.runtime;
@@ -447,6 +561,7 @@ export function useSessionController(
 			const entry = buildSessionRuntime(
 				target.id,
 				storedModel ?? fallbackModel,
+				stored?.headSnapshotId ?? target.headSnapshotId,
 				stored?.messages,
 			);
 			if (!entry) {
@@ -454,7 +569,7 @@ export function useSessionController(
 				return;
 			}
 			entry.title = target.title;
-			activateSession(target.id);
+			void activateSession(target.id);
 			return;
 		}
 
@@ -652,6 +767,199 @@ export function useSessionController(
 		[copySessionId],
 	);
 
+	const openMessageActions = useCallback((message: UserMessage) => {
+		setCommandNotice(null);
+		setMessageActionTarget({
+			timestamp: message.timestamp,
+			text: getUserMessageText(message),
+		});
+	}, []);
+
+	const closeMessageActions = useCallback(() => {
+		setMessageActionTarget(null);
+	}, []);
+
+	const activeMessageAction = useMemo(() => {
+		if (!messageActionTarget) {
+			return null;
+		}
+
+		const sessionId = activeSessionId;
+		if (!sessionId) {
+			return null;
+		}
+
+		const messageIndex = findUserMessageIndex(state.messages, messageActionTarget);
+		if (messageIndex < 0) {
+			return null;
+		}
+
+		const message = state.messages[messageIndex];
+		if (!message || message.role !== "user") {
+			return null;
+		}
+
+		const entry = sessionsRef.current.get(sessionId);
+		const storedCheckpointSnapshotId = services.sessionStore.getUserMessageCheckpoint(
+			sessionId,
+			message.timestamp,
+		);
+		const checkpointSnapshotId =
+			storedCheckpointSnapshotId &&
+			services.workspaceSnapshotStore.has(storedCheckpointSnapshotId)
+				? storedCheckpointSnapshotId
+				: null;
+		const isBusy = state.isStreaming || Boolean(entry?.composerShellAbort);
+
+		return {
+			sessionId,
+			message,
+			messageIndex,
+			checkpointSnapshotId,
+			isBusy,
+		};
+	}, [
+		activeSessionId,
+		findUserMessageIndex,
+		messageActionTarget,
+		services,
+		state.isStreaming,
+		state.messages,
+	]);
+
+	const copyMessageFromActions = useCallback(async () => {
+		if (!activeMessageAction) {
+			return;
+		}
+		try {
+			await copyToClipboard(getUserMessageText(activeMessageAction.message));
+			closeMessageActions();
+			setCommandNotice("Message copied to clipboard.");
+		} catch (error: unknown) {
+			setCommandNotice(error instanceof Error ? error.message : String(error));
+		}
+	}, [activeMessageAction, closeMessageActions]);
+
+	const forkSessionFromMessage = useCallback(async () => {
+		if (!activeMessageAction) {
+			return;
+		}
+		if (activeMessageAction.isBusy) {
+			setCommandNotice("Wait for the active session to finish before forking.");
+			return;
+		}
+		if (!activeMessageAction.checkpointSnapshotId) {
+			setCommandNotice("Checkpoint data is unavailable for this message.");
+			return;
+		}
+
+		try {
+			const currentEntry = sessionsRef.current.get(activeMessageAction.sessionId);
+			const nextMessages = state.messages.slice(0, activeMessageAction.messageIndex);
+			const nextTitle = `${currentEntry?.title ?? DEFAULT_SESSION_TITLE} (fork)`;
+			const runtime = createAndActivateSession(
+				currentEntry?.runtime.agent.state.model ?? activeModelRef.current,
+				{
+					headSnapshotId: activeMessageAction.checkpointSnapshotId,
+					initialMessages: nextMessages,
+				},
+			);
+			if (!runtime) {
+				setCommandNotice("Unable to create a forked session.");
+				return;
+			}
+			services.sessionStore.updateSessionTitle(runtime.sessionId, nextTitle);
+			const runtimeEntry = sessionsRef.current.get(runtime.sessionId);
+			if (runtimeEntry) {
+				runtimeEntry.title = nextTitle;
+			}
+			for (const checkpoint of services.sessionStore.listUserMessageCheckpoints(
+				activeMessageAction.sessionId,
+			)) {
+				if (checkpoint.messageTimestamp >= activeMessageAction.message.timestamp) {
+					break;
+				}
+				services.sessionStore.setUserMessageCheckpoint(
+					runtime.sessionId,
+					checkpoint.messageTimestamp,
+					checkpoint.snapshotId,
+				);
+			}
+			services.sessionStore.replaceSessionMessages(runtime.sessionId, nextMessages);
+			setDraft(getUserMessageText(activeMessageAction.message));
+			closeMessageActions();
+		} catch (error: unknown) {
+			setCommandNotice(error instanceof Error ? error.message : String(error));
+		}
+	}, [
+		activeMessageAction,
+		closeMessageActions,
+		createAndActivateSession,
+		services,
+		setDraft,
+		state.messages,
+	]);
+
+	const revertSessionToMessage = useCallback(async () => {
+		if (!activeMessageAction) {
+			return;
+		}
+		if (activeMessageAction.isBusy) {
+			setCommandNotice("Wait for the active session to finish before reverting.");
+			return;
+		}
+		if (!activeMessageAction.checkpointSnapshotId) {
+			setCommandNotice("Checkpoint data is unavailable for this message.");
+			return;
+		}
+
+		try {
+			const entry = sessionsRef.current.get(activeMessageAction.sessionId);
+			const runtime = entry?.runtime;
+			if (!entry || !runtime) {
+				return;
+			}
+
+			await restoreSessionWorkspace(activeMessageAction.checkpointSnapshotId);
+			runtime.reset();
+			runtime.agent.state.messages = state.messages.slice(
+				0,
+				activeMessageAction.messageIndex,
+			);
+			entry.pendingBashMessages = [];
+			entry.toolExecutions.clear();
+			entry.headSnapshotId = activeMessageAction.checkpointSnapshotId;
+			services.sessionStore.replaceSessionMessages(
+				activeMessageAction.sessionId,
+				runtime.agent.state.messages,
+			);
+			services.sessionStore.deleteUserMessageCheckpointsFrom(
+				activeMessageAction.sessionId,
+				activeMessageAction.message.timestamp,
+			);
+			updateSessionHeadSnapshot(
+				activeMessageAction.sessionId,
+				activeMessageAction.checkpointSnapshotId,
+			);
+			pruneUnreferencedSnapshots();
+			setDraft(getUserMessageText(activeMessageAction.message));
+			closeMessageActions();
+			syncRuntimeState();
+		} catch (error: unknown) {
+			setCommandNotice(error instanceof Error ? error.message : String(error));
+		}
+	}, [
+		activeMessageAction,
+		closeMessageActions,
+		restoreSessionWorkspace,
+		services,
+		setDraft,
+		state.messages,
+		updateSessionHeadSnapshot,
+		pruneUnreferencedSnapshots,
+		syncRuntimeState,
+	]);
+
 	const submitSessionRename = useCallback(() => {
 		const dialog = sessionRenameDialogState;
 		if (!dialog) {
@@ -691,6 +999,7 @@ export function useSessionController(
 	const resetSession = useCallback(() => {
 		setCommandNotice(null);
 		setActivePicker(null);
+		setMessageActionTarget(null);
 		runtimeRef.current = null;
 		setActiveSessionId(null);
 		services.sessionStore.setLastActiveSessionId(null);
@@ -720,11 +1029,13 @@ export function useSessionController(
 	const confirmDeleteSession = useCallback(
 		(sessionId: string) => {
 			const activeId = activeSessionIdRef.current;
+			setMessageActionTarget(null);
 			const entry = sessionsRef.current.get(sessionId);
 			entry?.runtime.abort();
 			entry?.unsubscribe();
 			sessionsRef.current.delete(sessionId);
 			services.sessionStore.deleteSession(sessionId);
+			pruneUnreferencedSnapshots();
 			setPendingDeleteSessionId(null);
 			if (activeId === sessionId) {
 				const fallback = services.sessionStore.listSessions(1)[0];
@@ -740,12 +1051,17 @@ export function useSessionController(
 					if (model) {
 						const runtimeEntry =
 							sessionsRef.current.get(fallback.id) ??
-							buildSessionRuntime(fallback.id, model, stored?.messages);
+							buildSessionRuntime(
+								fallback.id,
+								model,
+								stored?.headSnapshotId ?? fallback.headSnapshotId,
+								stored?.messages,
+							);
 						if (!runtimeEntry) {
 							return;
 						}
 						runtimeEntry.title = fallback.title;
-						activateSession(fallback.id);
+						void activateSession(fallback.id);
 					}
 				} else {
 					runtimeRef.current = null;
@@ -757,7 +1073,13 @@ export function useSessionController(
 			}
 			setCommandNotice("Session deleted.");
 		},
-		[activateSession, buildSessionRuntime, services, syncRuntimeState],
+		[
+			activateSession,
+			buildSessionRuntime,
+			pruneUnreferencedSnapshots,
+			services,
+			syncRuntimeState,
+		],
 	);
 
 	const clearPendingSessionDelete = useCallback(() => {
@@ -989,14 +1311,6 @@ export function useSessionController(
 		[services, syncRuntimeState],
 	);
 
-	const setDraft = useCallback((value: string) => {
-		if (value) {
-			setCommandNotice(null);
-		}
-
-		dispatch({ type: "draftChanged", value });
-	}, []);
-
 	const setComposerMenuOpen = useCallback((open: boolean) => {
 		composerMenuOpenRef.current = open;
 	}, []);
@@ -1168,6 +1482,8 @@ export function useSessionController(
 								sessionId,
 								currentRuntime.agent.state.messages,
 							);
+							captureAndStoreSessionHeadSnapshot(sessionId);
+							pruneUnreferencedSnapshots();
 						}
 						setCommandNotice(null);
 					} catch (error: unknown) {
@@ -1205,6 +1521,22 @@ export function useSessionController(
 				(message) => message.role === "user",
 			);
 
+			try {
+				const checkpointSnapshotId = services.workspaceSnapshotStore.capture();
+				services.sessionStore.setUserMessageCheckpoint(
+					runtime.sessionId,
+					userMessage.timestamp,
+					checkpointSnapshotId,
+				);
+				updateSessionHeadSnapshot(runtime.sessionId, checkpointSnapshotId);
+				pruneUnreferencedSnapshots();
+			} catch (error: unknown) {
+				setCommandNotice(
+					error instanceof Error ? error.message : String(error),
+				);
+				return;
+			}
+
 			setShowWelcomeScreen(false);
 			dispatch({ type: "promptSubmitted", message: userMessage });
 			if (isFirstUserMessage) {
@@ -1235,14 +1567,17 @@ export function useSessionController(
 				});
 		},
 		[
+			captureAndStoreSessionHeadSnapshot,
 			ensureActiveRuntime,
 			exitSession,
 			maybeAutoRenameSession,
 			openRenameDialog,
+			pruneUnreferencedSnapshots,
 			resetSession,
 			selectModel,
 			services,
 			syncRuntimeState,
+			updateSessionHeadSnapshot,
 		],
 	);
 
@@ -1342,6 +1677,20 @@ export function useSessionController(
 		(activeSessionId
 			? sessionsRef.current.get(activeSessionId)?.title
 			: undefined) ?? DEFAULT_SESSION_TITLE;
+	const messageActionsState = activeMessageAction
+		? {
+			revertDisabledReason: activeMessageAction.isBusy
+				? "wait for the active session to finish"
+				: !activeMessageAction.checkpointSnapshotId
+					? "checkpoint data unavailable for this message"
+					: undefined,
+			forkDisabledReason: activeMessageAction.isBusy
+				? "wait for the active session to finish"
+				: !activeMessageAction.checkpointSnapshotId
+					? "checkpoint data unavailable for this message"
+					: undefined,
+		}
+		: null;
 
 	const commandPickerState: CommandPickerState | null = (() => {
 		if (!activePicker) {
@@ -1461,7 +1810,7 @@ export function useSessionController(
 				const existing = sessionsRef.current.get(itemId);
 				if (existing) {
 					setActiveModel(existing.runtime.agent.state.model);
-					activateSession(itemId);
+					void activateSession(itemId);
 					setActivePicker(null);
 					return;
 				}
@@ -1484,6 +1833,7 @@ export function useSessionController(
 				const entry = buildSessionRuntime(
 					itemId,
 					selectedModel ?? null,
+					stored.headSnapshotId,
 					stored.messages,
 				);
 				if (!entry) {
@@ -1493,7 +1843,7 @@ export function useSessionController(
 				if (selectedModel) {
 					setActiveModel(selectedModel);
 				}
-				activateSession(itemId);
+				void activateSession(itemId);
 				setActivePicker(null);
 				return;
 			}
@@ -1560,5 +1910,11 @@ export function useSessionController(
 		setSessionRenameValue,
 		submitSessionRename,
 		cancelSessionRename,
+		messageActionsState,
+		openMessageActions,
+		closeMessageActions,
+		copyMessageFromActions,
+		forkSessionFromMessage,
+		revertSessionToMessage,
 	};
 }

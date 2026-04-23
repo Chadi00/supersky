@@ -24,6 +24,7 @@ test("creates, lists, renames, and deletes sessions", () => {
 			title: "First",
 			workspaceRoot,
 			model: null,
+			headSnapshotId: "snap-1",
 		});
 		store.createSession({
 			id: "s-2",
@@ -38,6 +39,7 @@ test("creates, lists, renames, and deletes sessions", () => {
 		]);
 		store.updateSessionTitle("s-1", "Renamed");
 		expect(store.getSession("s-1")?.title).toBe("Renamed");
+		expect(store.getSession("s-1")?.headSnapshotId).toBe("snap-1");
 
 		store.deleteSession("s-2");
 		expect(store.getSession("s-2")).toBeNull();
@@ -87,5 +89,33 @@ test("persists and reloads full message transcripts", () => {
 
 		store.replaceSessionMessages("s-1", messages);
 		expect(store.getSession("s-1")?.messages).toEqual(messages);
+	});
+});
+
+test("persists head snapshots and user message checkpoints", () => {
+	withStore((store) => {
+		store.createSession({
+			id: "s-1",
+			title: "Transcript",
+			workspaceRoot,
+			model: null,
+			headSnapshotId: "snap-1",
+		});
+
+		store.updateSessionHeadSnapshot("s-1", "snap-2");
+		store.setUserMessageCheckpoint("s-1", 100, "snap-0");
+		store.setUserMessageCheckpoint("s-1", 200, "snap-1");
+
+		expect(store.getSession("s-1")?.headSnapshotId).toBe("snap-2");
+		expect(store.getUserMessageCheckpoint("s-1", 100)).toBe("snap-0");
+		expect(store.listUserMessageCheckpoints("s-1")).toEqual([
+			{ messageTimestamp: 100, snapshotId: "snap-0" },
+			{ messageTimestamp: 200, snapshotId: "snap-1" },
+		]);
+
+		store.deleteUserMessageCheckpointsFrom("s-1", 200);
+		expect(store.listUserMessageCheckpoints("s-1")).toEqual([
+			{ messageTimestamp: 100, snapshotId: "snap-0" },
+		]);
 	});
 });

@@ -8,6 +8,7 @@ import { Toast, ToastProvider, useToast } from "./app/Toast";
 import { Composer, type ComposerHandle } from "./session/Composer";
 import { InlineCommandPickerDialog } from "./session/InlineCommandPickerDialog";
 import { LoginDialog } from "./session/LoginDialog";
+import { MessageActionsDialog } from "./session/MessageActionsDialog";
 import { deriveSessionLayout } from "./session/layout";
 import { MessageList } from "./session/MessageList";
 import type { SessionServices } from "./session/providerState/services";
@@ -69,6 +70,12 @@ function AppContent({ projectLine, services, initialSessionId }: AppProps) {
 		setSessionRenameValue,
 		submitSessionRename,
 		cancelSessionRename,
+		messageActionsState,
+		openMessageActions,
+		closeMessageActions,
+		copyMessageFromActions,
+		forkSessionFromMessage,
+		revertSessionToMessage,
 	} = useSessionController(services, initialSessionId ?? null);
 	const layout = deriveSessionLayout(width, isNewSession);
 	const composerRef = useRef<ComposerHandle>(null);
@@ -82,7 +89,8 @@ function AppContent({ projectLine, services, initialSessionId }: AppProps) {
 		loginDialogState !== null ||
 		sessionRenameDialogState !== null ||
 		dialogCommandPickerState !== null ||
-		sessionPickerState !== null;
+		sessionPickerState !== null ||
+		messageActionsState !== null;
 	const modelLabel = activeModel
 		? availableProviderCount > 1
 			? `(${activeModel.provider}) ${activeModel.id}`
@@ -113,6 +121,16 @@ function AppContent({ projectLine, services, initialSessionId }: AppProps) {
 	const handleRootMouseUp = useCallback(() => {
 		copySelection(renderer, toast);
 	}, [renderer, toast]);
+
+	const handleUserMessageMouseUp = useCallback(
+		(message: Parameters<typeof openMessageActions>[0]) => {
+			if (renderer.getSelection()?.getSelectedText()) {
+				return;
+			}
+			openMessageActions(message);
+		},
+		[openMessageActions, renderer],
+	);
 
 	useEffect(() => {
 		if (!commandNotice) {
@@ -181,6 +199,7 @@ function AppContent({ projectLine, services, initialSessionId }: AppProps) {
 								toolExecutions={state.toolExecutions}
 								toolDefinitions={toolDefinitions}
 								onMouseDown={focusComposer}
+								onUserMessageMouseUp={handleUserMessageMouseUp}
 							/>
 
 							<box paddingTop={0} flexShrink={0}>
@@ -267,6 +286,38 @@ function AppContent({ projectLine, services, initialSessionId }: AppProps) {
 					state={dialogCommandPickerState}
 					onClose={closeCommandPicker}
 					onSelect={selectCommandPickerItem}
+				/>
+			) : null}
+
+			{messageActionsState ? (
+				<MessageActionsDialog
+					onClose={closeMessageActions}
+					options={[
+						{
+							id: "revert",
+							label: "Revert",
+							description:
+								messageActionsState.revertDisabledReason ??
+								"undo messages and file changes",
+							disabled: Boolean(messageActionsState.revertDisabledReason),
+							onSelect: revertSessionToMessage,
+						},
+						{
+							id: "copy",
+							label: "Copy",
+							description: "message text to clipboard",
+							onSelect: copyMessageFromActions,
+						},
+						{
+							id: "fork",
+							label: "Fork",
+							description:
+								messageActionsState.forkDisabledReason ??
+								"create a new session",
+							disabled: Boolean(messageActionsState.forkDisabledReason),
+							onSelect: forkSessionFromMessage,
+						},
+					]}
 				/>
 			) : null}
 

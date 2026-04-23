@@ -14,6 +14,10 @@ import type { SessionStoreLike } from "./sessionStore";
 import { SessionStore } from "./sessionStore";
 import type { SettingsManagerLike } from "./settingsManager";
 import { SettingsManager } from "./settingsManager";
+import {
+	createWorkspaceSnapshotStore,
+	type WorkspaceSnapshotStoreLike,
+} from "./workspaceSnapshotStore";
 
 const DEFAULT_SESSION_TITLE = "New session";
 
@@ -80,6 +84,7 @@ export type SessionServices = {
 	settingsManager: SettingsManagerLike;
 	modelRegistry: ModelRegistryLike;
 	sessionStore: SessionStoreLike;
+	workspaceSnapshotStore: WorkspaceSnapshotStoreLike;
 	workspaceRoot: string;
 	createRuntime?: (
 		model: Model<Api> | null,
@@ -107,12 +112,14 @@ export function createSessionServices(): SessionServices {
 	const modelRegistry = new ModelRegistry(authStorage);
 	const workspaceRoot = resolveWorkspaceRoot();
 	const sessionStore = new SessionStore(workspaceRoot);
+	const workspaceSnapshotStore = createWorkspaceSnapshotStore({ workspaceRoot });
 
 	return {
 		authStorage,
 		settingsManager,
 		modelRegistry,
 		sessionStore,
+		workspaceSnapshotStore,
 		workspaceRoot,
 		generateSessionTitle: (input) =>
 			generateSessionTitle(authStorage, input.model, {
