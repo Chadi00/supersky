@@ -2,8 +2,6 @@
 
 **Supersky** is a small coding-agent harness (short system prompt, four tools: `read`, `edit`, `write`, `bash`) plus a fullscreen terminal UI on [OpenTUI](https://opentui.com) — the same TUI stack OpenCode uses. It takes cues from [pi.dev](https://pi.dev): a tight agent core, with sessions, slash commands, and keyboard shortcuts in the shell around it.
 
-This repo includes **OpenCode** project hooks under `.opencode/` (commands, skills) for developing Supersky with OpenCode.
-
 ---
 
 ## Run it
@@ -31,19 +29,7 @@ bun run check    # lint + typecheck + test
 
 ## Using the UI
 
-| Keys | Action |
-|------|--------|
-| **Enter** | Send the message |
-| **Shift+Enter** | New line in the composer |
-| **↑ / ↓** | Composer history |
-| **/** | Slash command picker |
-| **!** / **!!** | Run shell (with / without extra context) |
-| **Esc** | Close dialog or cancel shell / streaming |
-| **Ctrl+N** | New session |
-| **Ctrl+C** | Quit |
-| In **sessions**: **Ctrl+D** delete, **Ctrl+R** rename, **Ctrl+K** copy session id |
-
-Type **`exit`** and press Enter in the composer to quit.
+Run **`/hotkey`** in the composer to see keyboard shortcuts. Type **`exit`** and press Enter to quit.
 
 ---
 
