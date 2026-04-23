@@ -47,7 +47,8 @@ export function applySessionRevert(
 		return null;
 	}
 
-	const snapshotId = session.revert?.snapshotId ?? services.workspaceSnapshotStore.track();
+	const snapshotId =
+		session.revert?.snapshotId ?? services.workspaceSnapshotStore.track();
 	if (session.revert?.snapshotId) {
 		services.workspaceSnapshotStore.restore(session.revert.snapshotId);
 	}

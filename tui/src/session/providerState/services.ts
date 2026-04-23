@@ -112,7 +112,9 @@ export function createSessionServices(): SessionServices {
 	const modelRegistry = new ModelRegistry(authStorage);
 	const workspaceRoot = resolveWorkspaceRoot();
 	const sessionStore = new SessionStore(workspaceRoot);
-	const workspaceSnapshotStore = createWorkspaceSnapshotStore({ workspaceRoot });
+	const workspaceSnapshotStore = createWorkspaceSnapshotStore({
+		workspaceRoot,
+	});
 
 	return {
 		authStorage,

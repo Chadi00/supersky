@@ -12,9 +12,9 @@ export function getRevertDiffFiles(diffText: string) {
 	try {
 		return parsePatch(diffText).map((patch) => ({
 			filename:
-				[patch.newFileName, patch.oldFileName].find(
-					(item) => item && item !== "/dev/null",
-				)?.replace(/^[ab]\//, "") ?? "unknown",
+				[patch.newFileName, patch.oldFileName]
+					.find((item) => item && item !== "/dev/null")
+					?.replace(/^[ab]\//, "") ?? "unknown",
 			additions: patch.hunks.reduce(
 				(sum, hunk) =>
 					sum + hunk.lines.filter((line) => line.startsWith("+")).length,

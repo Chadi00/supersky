@@ -7,6 +7,7 @@ export const SESSIONS_COMMAND = "sessions";
 export const RENAME_COMMAND = "rename";
 export const SETTINGS_COMMAND = "settings";
 export const NEW_SESSION_COMMAND = "new";
+export const FORK_COMMAND = "fork";
 export const EXIT_COMMAND = "exit";
 
 export type SlashCommandName =
@@ -17,6 +18,7 @@ export type SlashCommandName =
 	| typeof RENAME_COMMAND
 	| typeof SETTINGS_COMMAND
 	| typeof NEW_SESSION_COMMAND
+	| typeof FORK_COMMAND
 	| typeof EXIT_COMMAND;
 
 export type SlashCommand = {
@@ -57,6 +59,10 @@ const slashCommands: SlashCommand[] = [
 	{
 		name: NEW_SESSION_COMMAND,
 		description: "Start a new session",
+	},
+	{
+		name: FORK_COMMAND,
+		description: "Fork from the last user message",
 	},
 	{
 		name: EXIT_COMMAND,

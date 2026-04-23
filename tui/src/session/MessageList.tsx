@@ -5,8 +5,7 @@ import type { BashExecutionMessage } from "../agent/bashExecutionTypes";
 import type { SuperskyToolDefinition } from "../agent/tools/types";
 import { colors } from "../shared/theme";
 import { formatMessageTimestamp } from "../shared/time";
-import type { ToolResultMessage } from "../vendor/pi-ai/index.js";
-import type { UserMessage } from "../vendor/pi-ai/index.js";
+import type { ToolResultMessage, UserMessage } from "../vendor/pi-ai/index.js";
 import {
 	AssistantMessage,
 	AssistantStreamingIndicator,
@@ -152,6 +151,7 @@ export function MessageList({
 		message: Extract<SessionState["messages"][number], { role: "user" }>,
 		keyPrefix: string,
 	) => (
+		// biome-ignore lint/a11y/noStaticElementInteractions: OpenTUI box rows are the interactive user-message primitive here.
 		<box
 			key={`${keyPrefix}-${message.timestamp}-${getUserMessageText(message).slice(0, 24)}`}
 			id={keyPrefix === "user" ? getUserMessageRowId(message) : undefined}
@@ -160,11 +160,11 @@ export function MessageList({
 			onMouseUp={
 				keyPrefix === "user"
 					? (event) => {
-						if (event.button !== 0) {
-							return;
+							if (event.button !== 0) {
+								return;
+							}
+							onUserMessageMouseUp?.(message);
 						}
-						onUserMessageMouseUp?.(message);
-					}
 					: undefined
 			}
 		>

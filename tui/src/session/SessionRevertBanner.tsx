@@ -32,6 +32,7 @@ export function SessionRevertBanner({
 			<text fg={colors.dimText}>
 				{`${hiddenUserMessageCount} message${hiddenUserMessageCount === 1 ? "" : "s"} reverted`}
 			</text>
+			{/* biome-ignore lint/a11y/noStaticElementInteractions: OpenTUI box rows are the interactive redo primitive here. */}
 			<box
 				id="session-revert-redo"
 				onMouseUp={(event) => {

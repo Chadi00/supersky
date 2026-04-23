@@ -6,8 +6,12 @@ import { join } from "node:path";
 import { createWorkspaceSnapshotStore } from "./workspaceSnapshotStore";
 
 test("tracks and restores the workspace file set", async () => {
-	const workspaceRoot = await mkdtemp(join(tmpdir(), "supersky-snapshot-workspace-"));
-	const snapshotRoot = await mkdtemp(join(tmpdir(), "supersky-snapshot-store-"));
+	const workspaceRoot = await mkdtemp(
+		join(tmpdir(), "supersky-snapshot-workspace-"),
+	);
+	const snapshotRoot = await mkdtemp(
+		join(tmpdir(), "supersky-snapshot-store-"),
+	);
 
 	await writeFile(join(workspaceRoot, "a.txt"), "one\n", "utf8");
 	await writeFile(join(workspaceRoot, "b.txt"), "two\n", "utf8");
@@ -24,16 +28,24 @@ test("tracks and restores the workspace file set", async () => {
 
 	store.restore(snapshotId);
 
-	await expect(readFile(join(workspaceRoot, "a.txt"), "utf8")).resolves.toBe("one\n");
-	await expect(readFile(join(workspaceRoot, "b.txt"), "utf8")).resolves.toBe("two\n");
-	await expect(readFile(join(workspaceRoot, "c.txt"), "utf8")).rejects.toThrow();
+	await expect(readFile(join(workspaceRoot, "a.txt"), "utf8")).resolves.toBe(
+		"one\n",
+	);
+	await expect(readFile(join(workspaceRoot, "b.txt"), "utf8")).resolves.toBe(
+		"two\n",
+	);
+	await expect(
+		readFile(join(workspaceRoot, "c.txt"), "utf8"),
+	).rejects.toThrow();
 
 	await rm(workspaceRoot, { recursive: true, force: true });
 	await rm(snapshotRoot, { recursive: true, force: true });
 });
 
 test("reverts changed files using the earliest matching snapshot", async () => {
-	const workspaceRoot = await mkdtemp(join(tmpdir(), "supersky-revert-workspace-"));
+	const workspaceRoot = await mkdtemp(
+		join(tmpdir(), "supersky-revert-workspace-"),
+	);
 	const snapshotRoot = await mkdtemp(join(tmpdir(), "supersky-revert-store-"));
 	const filePath = join(workspaceRoot, "a.txt");
 
@@ -63,7 +75,9 @@ test("reverts changed files using the earliest matching snapshot", async () => {
 });
 
 test("diff reports reverted file changes against a saved snapshot", async () => {
-	const workspaceRoot = await mkdtemp(join(tmpdir(), "supersky-diff-workspace-"));
+	const workspaceRoot = await mkdtemp(
+		join(tmpdir(), "supersky-diff-workspace-"),
+	);
 	const snapshotRoot = await mkdtemp(join(tmpdir(), "supersky-diff-store-"));
 
 	await writeFile(join(workspaceRoot, "a.txt"), "base\n", "utf8");

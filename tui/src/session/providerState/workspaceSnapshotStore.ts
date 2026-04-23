@@ -99,12 +99,21 @@ function listFallbackWorkspaceFiles(
 		});
 	}
 
-	return files.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+	return files.sort((left, right) =>
+		left.relativePath.localeCompare(right.relativePath),
+	);
 }
 
 function listWorkspaceFiles(workspaceRoot: string): WorkspaceFile[] {
 	const gitResult = Bun.spawnSync({
-		cmd: ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+		cmd: [
+			"git",
+			"ls-files",
+			"--cached",
+			"--others",
+			"--exclude-standard",
+			"-z",
+		],
 		cwd: workspaceRoot,
 		stdout: "pipe",
 		stderr: "pipe",
@@ -129,7 +138,9 @@ function listWorkspaceFiles(workspaceRoot: string): WorkspaceFile[] {
 				}
 			})
 			.filter((file): file is WorkspaceFile => file !== null)
-			.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+			.sort((left, right) =>
+				left.relativePath.localeCompare(right.relativePath),
+			);
 	}
 
 	return listFallbackWorkspaceFiles(workspaceRoot);
@@ -154,7 +165,10 @@ function createSnapshotPatchText(path: string, before: string, after: string) {
 export class WorkspaceSnapshotStore implements WorkspaceSnapshotStoreLike {
 	private snapshotsDir: string;
 
-	constructor(workspaceRoot: string, snapshotsDir = getSnapshotsDir(workspaceRoot)) {
+	constructor(
+		workspaceRoot: string,
+		snapshotsDir = getSnapshotsDir(workspaceRoot),
+	) {
 		this.workspaceRoot = workspaceRoot;
 		this.snapshotsDir = snapshotsDir;
 	}
@@ -216,17 +230,21 @@ export class WorkspaceSnapshotStore implements WorkspaceSnapshotStoreLike {
 		}
 
 		const retained = new Set(snapshotIds);
-		for (const entry of readdirSync(this.snapshotsDir, { withFileTypes: true })) {
+		for (const entry of readdirSync(this.snapshotsDir, {
+			withFileTypes: true,
+		})) {
 			if (!entry.isDirectory() || retained.has(entry.name)) {
 				continue;
 			}
-			rmSync(join(this.snapshotsDir, entry.name), { recursive: true, force: true });
+			rmSync(join(this.snapshotsDir, entry.name), {
+				recursive: true,
+				force: true,
+			});
 		}
 	}
 
 	track() {
 		const snapshotId = randomUUID();
-		const snapshotDir = this.getSnapshotDir(snapshotId);
 		const filesDir = this.getFilesDir(snapshotId);
 		const files = listWorkspaceFiles(this.workspaceRoot);
 
@@ -291,7 +309,6 @@ export class WorkspaceSnapshotStore implements WorkspaceSnapshotStoreLike {
 	}
 
 	restore(snapshotId: string) {
-		const snapshotDir = this.getSnapshotDir(snapshotId);
 		const filesDir = this.getFilesDir(snapshotId);
 		const manifestPath = this.getManifestPath(snapshotId);
 		if (!existsSync(manifestPath)) {
@@ -343,11 +360,15 @@ export class WorkspaceSnapshotStore implements WorkspaceSnapshotStoreLike {
 		]);
 
 		const patches: string[] = [];
-		for (const relativePath of [...paths].toSorted((left, right) => left.localeCompare(right))) {
+		for (const relativePath of [...paths].toSorted((left, right) =>
+			left.localeCompare(right),
+		)) {
 			const snapshotFile = snapshotFiles.get(relativePath);
 			const currentFile = currentByPath.get(relativePath);
 			const before = snapshotFile?.content ?? "";
-			const after = currentFile ? readFileIfExists(currentFile.absolutePath) ?? "" : "";
+			const after = currentFile
+				? (readFileIfExists(currentFile.absolutePath) ?? "")
+				: "";
 			const beforeExists = Boolean(snapshotFile);
 			const afterExists = Boolean(currentFile);
 
@@ -369,5 +390,8 @@ export class WorkspaceSnapshotStore implements WorkspaceSnapshotStoreLike {
 export function createWorkspaceSnapshotStore(
 	options: WorkspaceSnapshotStoreOptions,
 ): WorkspaceSnapshotStoreLike {
-	return new WorkspaceSnapshotStore(options.workspaceRoot, options.snapshotsDir);
+	return new WorkspaceSnapshotStore(
+		options.workspaceRoot,
+		options.snapshotsDir,
+	);
 }

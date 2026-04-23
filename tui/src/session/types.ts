@@ -59,8 +59,7 @@ export function getSubmittedComposerHistory(messages: AgentMessage[]) {
 		.map((message, index) => ({ message, index }))
 		.filter(
 			(entry): entry is { message: ComposerHistoryMessage; index: number } =>
-				entry.message.role === "user" ||
-				entry.message.role === "bashExecution",
+				entry.message.role === "user" || entry.message.role === "bashExecution",
 		)
 		.sort((left, right) => {
 			if (left.message.timestamp !== right.message.timestamp) {

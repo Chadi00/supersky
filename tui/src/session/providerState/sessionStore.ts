@@ -66,10 +66,7 @@ export interface SessionStoreLike {
 	}): SessionSummary;
 	updateSessionTitle(sessionId: string, title: string): void;
 	updateSessionModel(sessionId: string, model: Model<Api> | null): void;
-	setSessionRevert(
-		sessionId: string,
-		revert: SessionRevertState | null,
-	): void;
+	setSessionRevert(sessionId: string, revert: SessionRevertState | null): void;
 	replaceSessionMessages(sessionId: string, messages: AgentMessage[]): void;
 	listSessionPatches(sessionId: string): SessionPatch[];
 	replaceSessionPatches(sessionId: string, patches: SessionPatch[]): void;
@@ -114,7 +111,10 @@ function mapSessionRow(row: SessionRow): SessionSummary {
 function parsePatchFiles(filesJson: string) {
 	try {
 		const parsed = JSON.parse(filesJson) as unknown;
-		if (Array.isArray(parsed) && parsed.every((item) => typeof item === "string")) {
+		if (
+			Array.isArray(parsed) &&
+			parsed.every((item) => typeof item === "string")
+		) {
 			return parsed;
 		}
 	} catch {
@@ -174,9 +174,9 @@ export class SessionStore implements SessionStoreLike {
 			CREATE INDEX IF NOT EXISTS session_patch_session_timestamp_idx
 				ON session_patch(session_id, message_timestamp, id);
 		`);
-		const columns = this.db
-			.query("PRAGMA table_info(session)")
-			.all() as Array<{ name: string }>;
+		const columns = this.db.query("PRAGMA table_info(session)").all() as Array<{
+			name: string;
+		}>;
 		const ensureColumn = (name: string, ddl: string) => {
 			if (columns.some((column) => column.name === name)) {
 				return;
@@ -352,7 +352,9 @@ export class SessionStore implements SessionStoreLike {
 		const now = Date.now();
 		const transaction = this.db.transaction(
 			(session: string, nextPatches: SessionPatch[]) => {
-				this.db.query("DELETE FROM session_patch WHERE session_id = ?").run(session);
+				this.db
+					.query("DELETE FROM session_patch WHERE session_id = ?")
+					.run(session);
 				const insert = this.db.query(
 					`INSERT INTO session_patch (session_id, message_timestamp, snapshot_id, files_json)
 					 VALUES (?, ?, ?, ?)`,

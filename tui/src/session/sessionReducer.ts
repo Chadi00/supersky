@@ -42,7 +42,7 @@ export function sessionReducer(
 	state: SessionState,
 	action: SessionAction,
 ): SessionState {
-		switch (action.type) {
+	switch (action.type) {
 		case "draftChanged": {
 			if (state.draft === action.value) {
 				return state;

@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 
 import {
 	EXIT_COMMAND,
+	FORK_COMMAND,
 	getMatchingSlashCommands,
 	getSlashMenuQuery,
 	isExitCommand,
@@ -45,6 +46,7 @@ test("opens the slash menu only while the cursor is inside the leading token", (
 
 test("matches slash commands by prefix before description text", () => {
 	expect(getMatchingSlashCommands("m")[0]?.name).toBe(MODEL_COMMAND);
+	expect(getMatchingSlashCommands("fo")[0]?.name).toBe(FORK_COMMAND);
 	expect(getMatchingSlashCommands("session")[0]?.name).toBe(SESSIONS_COMMAND);
 });
 
@@ -62,6 +64,7 @@ test("parses a submitted slash command from the first token", () => {
 	expect(parseSubmittedSlashCommand(" /ExIt  ")?.command.name).toBe(
 		EXIT_COMMAND,
 	);
+	expect(parseSubmittedSlashCommand("/fork")?.command.name).toBe(FORK_COMMAND);
 	expect(parseSubmittedSlashCommand("/new later")?.command.name).toBe(
 		NEW_SESSION_COMMAND,
 	);

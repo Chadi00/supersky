@@ -2,13 +2,17 @@ import { RGBA, TextAttributes } from "@opentui/core";
 import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 import { useEffect, useMemo, useState } from "react";
 
-const OVERLAY_BACKGROUND = RGBA.fromInts(0, 0, 0, 150);
-const PANEL_BACKGROUND = "#141414";
-const TEXT = "#eeeeee";
-const MUTED_TEXT = "#808080";
-const SELECTED_BACKGROUND = "#fab283";
-const SELECTED_TEXT = "#0a0a0a";
-const DISABLED_TEXT = "#5a5a5a";
+import { colors } from "../shared/theme";
+
+const OVERLAY_BACKGROUND = RGBA.fromInts(0, 0, 0, 176);
+const PANEL_BACKGROUND = colors.panelBackground;
+const PANEL_BORDER = colors.commandMenuBorder;
+const TEXT = colors.foregroundText;
+const MUTED_TEXT = colors.dimText;
+const SELECTED_BACKGROUND = colors.commandMenuSelectedBackground;
+const SELECTED_TEXT = colors.commandMenuSelectedText;
+const SELECTED_BORDER = colors.accentText;
+const DISABLED_TEXT = colors.mutedText;
 
 export type MessageActionOption = {
 	id: string;
@@ -33,7 +37,8 @@ function getNextEnabledIndex(
 	}
 
 	for (let offset = 0; offset < options.length; offset += 1) {
-		const index = (startIndex + offset * direction + options.length) % options.length;
+		const index =
+			(startIndex + offset * direction + options.length) % options.length;
 		if (!options[index]?.disabled) {
 			return index;
 		}
@@ -58,7 +63,7 @@ export function MessageActionsDialog({
 	}, [enabledDefaultIndex]);
 
 	const selectedOption = selectedIndex >= 0 ? options[selectedIndex] : null;
-	const dialogWidth = Math.max(40, Math.min(56, width - 2));
+	const dialogWidth = Math.max(1, Math.min(64, width - 2));
 
 	useKeyboard((key) => {
 		if (key.defaultPrevented) {
@@ -75,14 +80,18 @@ export function MessageActionsDialog({
 		if (key.name === "up") {
 			key.preventDefault();
 			key.stopPropagation();
-			setSelectedIndex((current) => getNextEnabledIndex(options, current - 1, -1));
+			setSelectedIndex((current) =>
+				getNextEnabledIndex(options, current - 1, -1),
+			);
 			return;
 		}
 
 		if (key.name === "down") {
 			key.preventDefault();
 			key.stopPropagation();
-			setSelectedIndex((current) => getNextEnabledIndex(options, current + 1, 1));
+			setSelectedIndex((current) =>
+				getNextEnabledIndex(options, current + 1, 1),
+			);
 			return;
 		}
 
@@ -112,31 +121,46 @@ export function MessageActionsDialog({
 				width={dialogWidth}
 				flexDirection="column"
 				backgroundColor={PANEL_BACKGROUND}
-				padding={1}
+				border
+				borderColor={PANEL_BORDER}
+				paddingLeft={1}
+				paddingRight={1}
+				paddingTop={1}
+				paddingBottom={1}
 				gap={1}
 			>
-				<box flexDirection="row" justifyContent="space-between">
+				<box flexDirection="column">
 					<text fg={TEXT} attributes={TextAttributes.BOLD}>
-						Message Actions
+						Actions
 					</text>
-					<text fg={MUTED_TEXT}>esc</text>
+					<text fg={MUTED_TEXT}>Enter to select. Esc to close.</text>
 				</box>
 				<box flexDirection="column">
 					{options.map((option, index) => {
 						const isSelected = index === selectedIndex;
-						const textColor = option.disabled
+						const labelColor = option.disabled
 							? DISABLED_TEXT
 							: isSelected
 								? SELECTED_TEXT
 								: TEXT;
+						const descriptionColor = option.disabled
+							? DISABLED_TEXT
+							: isSelected
+								? SELECTED_TEXT
+								: MUTED_TEXT;
 						return (
+							// biome-ignore lint/a11y/noStaticElementInteractions: OpenTUI box rows are the interactive message-action primitive here.
 							<box
 								key={option.id}
 								id={`message-action-${option.id}`}
+								border={["left"]}
+								borderColor={isSelected ? SELECTED_BORDER : PANEL_BORDER}
 								flexDirection="column"
-								backgroundColor={isSelected ? SELECTED_BACKGROUND : PANEL_BACKGROUND}
-								paddingX={1}
-								paddingY={1}
+								backgroundColor={
+									isSelected ? SELECTED_BACKGROUND : PANEL_BACKGROUND
+								}
+								paddingLeft={1}
+								paddingRight={1}
 								onMouseMove={() => {
 									if (!option.disabled) {
 										setSelectedIndex(index);
@@ -151,12 +175,14 @@ export function MessageActionsDialog({
 									void option.onSelect();
 								}}
 							>
-								<text fg={textColor} attributes={TextAttributes.BOLD}>
-									{option.label}
-								</text>
-								<text fg={option.disabled ? DISABLED_TEXT : MUTED_TEXT}>
-									{option.description}
-								</text>
+								<box flexDirection="row" gap={1}>
+									<text fg={labelColor} attributes={TextAttributes.BOLD}>
+										{option.label}
+									</text>
+									<text fg={descriptionColor} wrapMode="word">
+										{option.description}
+									</text>
+								</box>
 							</box>
 						);
 					})}

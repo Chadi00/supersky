@@ -6,8 +6,8 @@ import type { AgentRuntimeLike } from "./agent/runtime";
 import * as userShell from "./agent/userShell";
 import * as clipboard from "./app/clipboard";
 import { getCommandPickerRowId } from "./session/commandPicker";
-import { getUserMessageRowId } from "./session/MessageList";
 import { SIDEBAR_LAYOUT_WIDTH } from "./session/layout";
+import { getUserMessageRowId } from "./session/MessageList";
 import * as browser from "./session/providerState/browser";
 import type { SessionServices } from "./session/providerState/services";
 import { appLifecycle } from "./shared/lifecycle";
@@ -106,7 +106,9 @@ function expectRowsLeftAligned(root: unknown, ...rowIds: string[]) {
 	expect(new Set(positions).size).toBe(1);
 }
 
-function getCurrentSessionId(services: ReturnType<typeof createFakeSessionServices>) {
+function getCurrentSessionId(
+	services: ReturnType<typeof createFakeSessionServices>,
+) {
 	return services.sessionStore.listSessions()[0]?.id ?? null;
 }
 
@@ -210,7 +212,7 @@ test("clicking a committed user message opens the message actions dialog", async
 			await settleScrollLayout(setup);
 
 			const frame = setup.captureCharFrame();
-			expect(frame).toContain("Message Actions");
+			expect(frame).toContain("Actions");
 			expect(frame).toContain("Revert");
 			expect(frame).toContain("Copy");
 			expect(frame).toContain("Fork");
@@ -243,7 +245,9 @@ test("the message actions dialog can copy a user message", async () => {
 			await settleScrollLayout(setup);
 
 			expect(copyToClipboardSpy).toHaveBeenCalledWith("message 0");
-			expect(setup.captureCharFrame()).toContain("Message copied to clipboard.");
+			expect(setup.captureCharFrame()).toContain(
+				"Message copied to clipboard.",
+			);
 		},
 		{ width: 110, height: 30 },
 		"~/projects/supersky:main",
@@ -252,8 +256,12 @@ test("the message actions dialog can copy a user message", async () => {
 });
 
 test("forking from a message keeps the current workspace files intact", async () => {
-	const workspaceRoot = await mkdtemp(join(tmpdir(), "supersky-fork-workspace-"));
-	const snapshotsDir = await mkdtemp(join(tmpdir(), "supersky-fork-snapshots-"));
+	const workspaceRoot = await mkdtemp(
+		join(tmpdir(), "supersky-fork-workspace-"),
+	);
+	const snapshotsDir = await mkdtemp(
+		join(tmpdir(), "supersky-fork-snapshots-"),
+	);
 	const filePath = join(workspaceRoot, "note.txt");
 	await writeFile(filePath, "base\n", "utf8");
 	const sharedServices = createFakeSessionServices({
@@ -268,15 +276,18 @@ test("forking from a message keeps the current workspace files intact", async ()
 				await settleScrollLayout(setup);
 
 				const originalSessionId = getCurrentSessionId(sharedServices);
-				const message = sharedServices.sessionStore.getSession(originalSessionId ?? "")
-					?.messages[0];
+				const message = sharedServices.sessionStore.getSession(
+					originalSessionId ?? "",
+				)?.messages[0];
 				expect(message?.role).toBe("user");
 
 				await writeFile(filePath, "changed\n", "utf8");
 
 				await clickRenderable(
 					setup,
-					getUserMessageRowId(message as Extract<AgentMessage, { role: "user" }>),
+					getUserMessageRowId(
+						message as Extract<AgentMessage, { role: "user" }>,
+					),
 				);
 				await settleScrollLayout(setup);
 				await clickRenderable(setup, "message-action-fork");
@@ -286,12 +297,14 @@ test("forking from a message keeps the current workspace files intact", async ()
 				expect(await readFile(filePath, "utf8")).toBe("changed\n");
 				expect(getComposerText(setup)).toContain("message 0");
 				expect(
-					sharedServices.sessionStore.getSession(originalSessionId ?? "")?.messages,
+					sharedServices.sessionStore.getSession(originalSessionId ?? "")
+						?.messages,
 				).toHaveLength(2);
 				const forkedSessionId = getCurrentSessionId(sharedServices);
 				expect(forkedSessionId).not.toBe(originalSessionId);
 				expect(
-					sharedServices.sessionStore.getSession(forkedSessionId ?? "")?.messages,
+					sharedServices.sessionStore.getSession(forkedSessionId ?? "")
+						?.messages,
 				).toEqual([]);
 			},
 			{ width: 110, height: 30 },
@@ -304,9 +317,54 @@ test("forking from a message keeps the current workspace files intact", async ()
 	}
 });
 
+test("submitting /fork branches from the latest user message", async () => {
+	const sharedServices = createFakeSessionServices();
+
+	await withApp(
+		async (setup) => {
+			await sendMessages(setup, 2);
+			await settleScrollLayout(setup);
+
+			const originalSessionId = getCurrentSessionId(sharedServices);
+			const originalMessages = [
+				...(sharedServices.sessionStore.getSession(originalSessionId ?? "")
+					?.messages ?? []),
+			];
+			expect(originalMessages).toHaveLength(4);
+
+			await submitText(setup, "/fork");
+			await settleScrollLayout(setup);
+
+			expect(sharedServices.sessionStore.listSessions()).toHaveLength(2);
+			expect(getComposerText(setup)).toContain("message 1");
+			expect(
+				sharedServices.sessionStore.getSession(originalSessionId ?? "")
+					?.messages,
+			).toEqual(originalMessages);
+
+			const forkedSessionId = getCurrentSessionId(sharedServices);
+			expect(forkedSessionId).not.toBe(originalSessionId);
+			expect(
+				sharedServices.sessionStore.getSession(forkedSessionId ?? "")?.messages,
+			).toEqual(originalMessages.slice(0, 2));
+			expect(
+				sharedServices.sessionStore.getSession(forkedSessionId ?? "")
+					?.parentSessionId,
+			).toBe(originalSessionId);
+		},
+		{ width: 110, height: 30 },
+		"~/projects/supersky:main",
+		sharedServices,
+	);
+});
+
 test("reverting from a message restores session file changes and shows a redo banner", async () => {
-	const workspaceRoot = await mkdtemp(join(tmpdir(), "supersky-revert-workspace-"));
-	const snapshotsDir = await mkdtemp(join(tmpdir(), "supersky-revert-snapshots-"));
+	const workspaceRoot = await mkdtemp(
+		join(tmpdir(), "supersky-revert-workspace-"),
+	);
+	const snapshotsDir = await mkdtemp(
+		join(tmpdir(), "supersky-revert-snapshots-"),
+	);
 	const filePath = join(workspaceRoot, "note.txt");
 	const executeUserShellCommandSpy = spyOn(
 		userShell,
@@ -343,7 +401,9 @@ test("reverting from a message restores session file changes and shows a redo ba
 
 				await clickRenderable(
 					setup,
-					getUserMessageRowId(message as Extract<AgentMessage, { role: "user" }>),
+					getUserMessageRowId(
+						message as Extract<AgentMessage, { role: "user" }>,
+					),
 				);
 				await settleScrollLayout(setup);
 				await clickRenderable(setup, "message-action-revert");
@@ -367,8 +427,12 @@ test("reverting from a message restores session file changes and shows a redo ba
 });
 
 test("redo restores reverted messages and file changes", async () => {
-	const workspaceRoot = await mkdtemp(join(tmpdir(), "supersky-redo-workspace-"));
-	const snapshotsDir = await mkdtemp(join(tmpdir(), "supersky-redo-snapshots-"));
+	const workspaceRoot = await mkdtemp(
+		join(tmpdir(), "supersky-redo-workspace-"),
+	);
+	const snapshotsDir = await mkdtemp(
+		join(tmpdir(), "supersky-redo-snapshots-"),
+	);
 	const filePath = join(workspaceRoot, "note.txt");
 	const executeUserShellCommandSpy = spyOn(
 		userShell,
@@ -403,7 +467,9 @@ test("redo restores reverted messages and file changes", async () => {
 
 				await clickRenderable(
 					setup,
-					getUserMessageRowId(message as Extract<AgentMessage, { role: "user" }>),
+					getUserMessageRowId(
+						message as Extract<AgentMessage, { role: "user" }>,
+					),
 				);
 				await settleScrollLayout(setup);
 				await clickRenderable(setup, "message-action-revert");
@@ -437,6 +503,7 @@ test("typing slash opens the command menu", async () => {
 
 		expect(frame).toContain("/login");
 		expect(frame).toContain("/logout");
+		expect(frame).toContain("/fork");
 		expect(frame).toContain("/model");
 		expect(frame).toContain("/settings");
 		expect(frame).toContain("/new");
@@ -461,17 +528,17 @@ test("submitting from the welcome screen switches to the session view immediatel
 				"ASCIIFontRenderable",
 			);
 
-				expect(banner).toBeNull();
-				expect(getComposerText(setup)).toBe("");
-				const frame = setup.captureCharFrame();
+			expect(banner).toBeNull();
+			expect(getComposerText(setup)).toBe("");
+			const frame = setup.captureCharFrame();
 
-				expect(frame).toContain("hello from welcome");
-				expect(frame).toContain("Working...");
-				expect(frame).toContain("⢀⠀ ~/projects/supersky:main");
-				expect(frame).not.toContain("Handled request.");
-			},
-			{ width: 110, height: 30 },
-			"~/projects/supersky:main",
+			expect(frame).toContain("hello from welcome");
+			expect(frame).toContain("Working...");
+			expect(frame).toContain("⢀⠀ ~/projects/supersky:main");
+			expect(frame).not.toContain("Handled request.");
+		},
+		{ width: 110, height: 30 },
+		"~/projects/supersky:main",
 		services,
 	);
 });
@@ -1079,8 +1146,12 @@ test("the session picker keeps the current session left aligned", async () => {
 });
 
 test("the session picker keyboard navigation switches sessions without restoring workspace files", async () => {
-	const workspaceRoot = await mkdtemp(join(tmpdir(), "supersky-switch-workspace-"));
-	const snapshotsDir = await mkdtemp(join(tmpdir(), "supersky-switch-snapshots-"));
+	const workspaceRoot = await mkdtemp(
+		join(tmpdir(), "supersky-switch-workspace-"),
+	);
+	const snapshotsDir = await mkdtemp(
+		join(tmpdir(), "supersky-switch-snapshots-"),
+	);
 	const filePath = join(workspaceRoot, "switch.txt");
 	await writeFile(filePath, "initial\n", "utf8");
 	const sharedServices = createFakeSessionServices({
@@ -1116,7 +1187,11 @@ test("the session picker keyboard navigation switches sessions without restoring
 	try {
 		await withApp(
 			async (setup) => {
-				await writeFile(filePath, "modified while session two active\n", "utf8");
+				await writeFile(
+					filePath,
+					"modified while session two active\n",
+					"utf8",
+				);
 				await submitText(setup, "/sessions");
 				await settleScrollLayout(setup);
 

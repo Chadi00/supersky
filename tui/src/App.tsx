@@ -8,14 +8,14 @@ import { Toast, ToastProvider, useToast } from "./app/Toast";
 import { Composer, type ComposerHandle } from "./session/Composer";
 import { InlineCommandPickerDialog } from "./session/InlineCommandPickerDialog";
 import { LoginDialog } from "./session/LoginDialog";
-import { MessageActionsDialog } from "./session/MessageActionsDialog";
 import { deriveSessionLayout } from "./session/layout";
+import { MessageActionsDialog } from "./session/MessageActionsDialog";
 import { MessageList } from "./session/MessageList";
-import { getRevertDiffFiles } from "./session/revertDiff";
 import type { SessionServices } from "./session/providerState/services";
-import { SessionRevertBanner } from "./session/SessionRevertBanner";
+import { getRevertDiffFiles } from "./session/revertDiff";
 import { SessionPickerDialog } from "./session/SessionPickerDialog";
 import { SessionRenameDialog } from "./session/SessionRenameDialog";
+import { SessionRevertBanner } from "./session/SessionRevertBanner";
 import { SessionSidebar } from "./session/SessionSidebar";
 import { useSessionController } from "./session/useSessionController";
 import { WelcomeScreen } from "./session/WelcomeScreen";
@@ -318,14 +318,14 @@ function AppContent({ projectLine, services, initialSessionId }: AppProps) {
 							label: "Revert",
 							description:
 								messageActionsState.revertDisabledReason ??
-								"undo messages and file changes",
+								"rewind to this prompt",
 							disabled: Boolean(messageActionsState.revertDisabledReason),
 							onSelect: revertSessionToMessage,
 						},
 						{
 							id: "copy",
 							label: "Copy",
-							description: "message text to clipboard",
+							description: "copy prompt text",
 							onSelect: copyMessageFromActions,
 						},
 						{
@@ -333,7 +333,7 @@ function AppContent({ projectLine, services, initialSessionId }: AppProps) {
 							label: "Fork",
 							description:
 								messageActionsState.forkDisabledReason ??
-								"create a new session",
+								"branch into a new session",
 							disabled: Boolean(messageActionsState.forkDisabledReason),
 							onSelect: forkSessionFromMessage,
 						},

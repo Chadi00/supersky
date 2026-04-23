@@ -20,6 +20,7 @@ import type { UserMessage } from "../vendor/pi-ai/index.js";
 import type { CommandPickerState } from "./commandPicker";
 import {
 	EXIT_COMMAND,
+	FORK_COMMAND,
 	isExitCommand,
 	isExitShortcut,
 	isNewSessionShortcut,
@@ -57,6 +58,7 @@ import {
 	buildSessionModifiedFiles,
 	type SessionModifiedFile,
 } from "./sessionFileDiff";
+import { sessionReducer } from "./sessionReducer";
 import {
 	applySessionRevert,
 	cleanupSessionRevert,
@@ -65,7 +67,6 @@ import {
 	getVisibleSessionMessages,
 	unrevertSession,
 } from "./sessionRevert";
-import { sessionReducer } from "./sessionReducer";
 import {
 	createInitialSessionState,
 	getSubmittedComposerHistory,
@@ -86,6 +87,12 @@ type PendingLoginInput = {
 type MessageActionTarget = {
 	timestamp: number;
 	text: string;
+};
+
+type ForkSessionTarget = {
+	sessionId: string;
+	message: UserMessage;
+	messageIndex: number;
 };
 
 type SessionRuntimeEntry = {
@@ -368,70 +375,71 @@ export function useSessionController(
 						return;
 					}
 					switch (event.type) {
-					case "turn_start": {
-						entry.pendingTurnSnapshotId = services.workspaceSnapshotStore.track();
-						break;
-					}
-					case "turn_end": {
-						const snapshotId = entry.pendingTurnSnapshotId;
-						entry.pendingTurnSnapshotId = null;
-						if (snapshotId) {
-							const patch = services.workspaceSnapshotStore.patch(snapshotId);
-							if (patch.files.length > 0) {
-								services.sessionStore.addSessionPatch(sessionId, {
-									messageTimestamp: event.message.timestamp,
-									snapshotId: patch.snapshotId,
-									files: patch.files,
-								});
-								pruneUnreferencedSnapshots();
-							}
+						case "turn_start": {
+							entry.pendingTurnSnapshotId =
+								services.workspaceSnapshotStore.track();
+							break;
 						}
-						break;
-					}
-					case "tool_execution_start": {
-						const previous = toolExecutions.get(event.toolCallId);
-						toolExecutions.set(event.toolCallId, {
-							toolCallId: event.toolCallId,
-							toolName: event.toolName,
-							args: event.args,
-							status: "running",
-							result: previous?.result,
-							isError: previous?.isError,
-						});
-						break;
-					}
-					case "tool_execution_update": {
-						toolExecutions.set(event.toolCallId, {
-							toolCallId: event.toolCallId,
-							toolName: event.toolName,
-							args: event.args,
-							status: "running",
-							result: event.partialResult,
-							isError: false,
-						});
-						break;
-					}
-					case "tool_execution_end": {
-						toolExecutions.set(event.toolCallId, {
-							toolCallId: event.toolCallId,
-							toolName: event.toolName,
-							args: toolExecutions.get(event.toolCallId)?.args ?? {},
-							status: event.isError ? "error" : "completed",
-							result: event.result,
-							isError: event.isError,
-						});
-						break;
-					}
-					case "agent_end": {
-						toolExecutions.clear();
-						if (entry && entry.pendingBashMessages.length > 0) {
-							for (const bashMessage of entry.pendingBashMessages) {
-								runtime.agent.state.messages.push(bashMessage);
+						case "turn_end": {
+							const snapshotId = entry.pendingTurnSnapshotId;
+							entry.pendingTurnSnapshotId = null;
+							if (snapshotId) {
+								const patch = services.workspaceSnapshotStore.patch(snapshotId);
+								if (patch.files.length > 0) {
+									services.sessionStore.addSessionPatch(sessionId, {
+										messageTimestamp: event.message.timestamp,
+										snapshotId: patch.snapshotId,
+										files: patch.files,
+									});
+									pruneUnreferencedSnapshots();
+								}
 							}
-							entry.pendingBashMessages = [];
+							break;
 						}
-						break;
-					}
+						case "tool_execution_start": {
+							const previous = toolExecutions.get(event.toolCallId);
+							toolExecutions.set(event.toolCallId, {
+								toolCallId: event.toolCallId,
+								toolName: event.toolName,
+								args: event.args,
+								status: "running",
+								result: previous?.result,
+								isError: previous?.isError,
+							});
+							break;
+						}
+						case "tool_execution_update": {
+							toolExecutions.set(event.toolCallId, {
+								toolCallId: event.toolCallId,
+								toolName: event.toolName,
+								args: event.args,
+								status: "running",
+								result: event.partialResult,
+								isError: false,
+							});
+							break;
+						}
+						case "tool_execution_end": {
+							toolExecutions.set(event.toolCallId, {
+								toolCallId: event.toolCallId,
+								toolName: event.toolName,
+								args: toolExecutions.get(event.toolCallId)?.args ?? {},
+								status: event.isError ? "error" : "completed",
+								result: event.result,
+								isError: event.isError,
+							});
+							break;
+						}
+						case "agent_end": {
+							toolExecutions.clear();
+							if (entry && entry.pendingBashMessages.length > 0) {
+								for (const bashMessage of entry.pendingBashMessages) {
+									runtime.agent.state.messages.push(bashMessage);
+								}
+								entry.pendingBashMessages = [];
+							}
+							break;
+						}
 					}
 					services.sessionStore.replaceSessionMessages(
 						sessionId,
@@ -458,13 +466,9 @@ export function useSessionController(
 				unsubscribe,
 			};
 			sessionsRef.current.set(sessionId, entry);
-		return entry;
+			return entry;
 		},
-		[
-			pruneUnreferencedSnapshots,
-			services,
-			syncRuntimeState,
-		],
+		[pruneUnreferencedSnapshots, services, syncRuntimeState],
 	);
 
 	const activateSession = useCallback(
@@ -485,7 +489,10 @@ export function useSessionController(
 	const createAndActivateSession = useCallback(
 		(
 			model: Model<Api> | null,
-			options?: { initialMessages?: AgentMessage[] },
+			options?: {
+				initialMessages?: AgentMessage[];
+				parentSessionId?: string | null;
+			},
 		) => {
 			const sessionId = crypto.randomUUID();
 			const entry = buildSessionRuntime(
@@ -502,6 +509,7 @@ export function useSessionController(
 				title: "New session",
 				workspaceRoot: services.workspaceRoot,
 				model,
+				parentSessionId: options?.parentSessionId,
 			});
 			if (options?.initialMessages) {
 				services.sessionStore.replaceSessionMessages(
@@ -805,7 +813,10 @@ export function useSessionController(
 			return null;
 		}
 
-		const messageIndex = findUserMessageIndex(state.messages, messageActionTarget);
+		const messageIndex = findUserMessageIndex(
+			state.messages,
+			messageActionTarget,
+		);
 		if (messageIndex < 0) {
 			return null;
 		}
@@ -832,6 +843,60 @@ export function useSessionController(
 		state.messages,
 	]);
 
+	const forkSessionAtMessage = useCallback(
+		async (target: ForkSessionTarget) => {
+			try {
+				const currentEntry = sessionsRef.current.get(target.sessionId);
+				const nextMessages = state.messages.slice(0, target.messageIndex);
+				const nextTitle = getForkedTitle(
+					currentEntry?.title ?? DEFAULT_SESSION_TITLE,
+				);
+				const runtime = createAndActivateSession(
+					currentEntry?.runtime.agent.state.model ?? activeModelRef.current,
+					{
+						initialMessages: nextMessages,
+						parentSessionId: target.sessionId,
+					},
+				);
+				if (!runtime) {
+					setCommandNotice("Unable to create a forked session.");
+					return;
+				}
+				services.sessionStore.updateSessionTitle(runtime.sessionId, nextTitle);
+				const runtimeEntry = sessionsRef.current.get(runtime.sessionId);
+				if (runtimeEntry) {
+					runtimeEntry.title = nextTitle;
+				}
+				services.sessionStore.replaceSessionMessages(
+					runtime.sessionId,
+					nextMessages,
+				);
+				services.sessionStore.replaceSessionPatches(
+					runtime.sessionId,
+					cloneSessionPatchesBefore(
+						services.sessionStore.listSessionPatches(target.sessionId),
+						target.message.timestamp,
+					),
+				);
+				closeMessageActions();
+				queueMicrotask(() => {
+					setDraft(getUserMessageText(target.message));
+				});
+			} catch (error: unknown) {
+				setCommandNotice(
+					error instanceof Error ? error.message : String(error),
+				);
+			}
+		},
+		[
+			closeMessageActions,
+			createAndActivateSession,
+			services,
+			setDraft,
+			state.messages,
+		],
+	);
+
 	const copyMessageFromActions = useCallback(async () => {
 		if (!activeMessageAction) {
 			return;
@@ -854,55 +919,17 @@ export function useSessionController(
 			return;
 		}
 
-		try {
-			const currentEntry = sessionsRef.current.get(activeMessageAction.sessionId);
-			const nextMessages = state.messages.slice(0, activeMessageAction.messageIndex);
-			const nextTitle = getForkedTitle(
-				currentEntry?.title ?? DEFAULT_SESSION_TITLE,
-			);
-			const runtime = createAndActivateSession(
-				currentEntry?.runtime.agent.state.model ?? activeModelRef.current,
-				{
-					initialMessages: nextMessages,
-				},
-			);
-			if (!runtime) {
-				setCommandNotice("Unable to create a forked session.");
-				return;
-			}
-			services.sessionStore.updateSessionTitle(runtime.sessionId, nextTitle);
-			const runtimeEntry = sessionsRef.current.get(runtime.sessionId);
-			if (runtimeEntry) {
-				runtimeEntry.title = nextTitle;
-			}
-			services.sessionStore.replaceSessionMessages(runtime.sessionId, nextMessages);
-			services.sessionStore.replaceSessionPatches(
-				runtime.sessionId,
-				cloneSessionPatchesBefore(
-					services.sessionStore.listSessionPatches(activeMessageAction.sessionId),
-					activeMessageAction.message.timestamp,
-				),
-			);
-			setDraft(getUserMessageText(activeMessageAction.message));
-			closeMessageActions();
-		} catch (error: unknown) {
-			setCommandNotice(error instanceof Error ? error.message : String(error));
-		}
-	}, [
-		activeMessageAction,
-		closeMessageActions,
-		createAndActivateSession,
-		services,
-		setDraft,
-		state.messages,
-	]);
+		await forkSessionAtMessage(activeMessageAction);
+	}, [activeMessageAction, forkSessionAtMessage]);
 
 	const revertSessionToMessage = useCallback(async () => {
 		if (!activeMessageAction) {
 			return;
 		}
 		if (activeMessageAction.isBusy) {
-			setCommandNotice("Wait for the active session to finish before reverting.");
+			setCommandNotice(
+				"Wait for the active session to finish before reverting.",
+			);
 			return;
 		}
 
@@ -928,7 +955,6 @@ export function useSessionController(
 		closeMessageActions,
 		services,
 		setDraft,
-		state.messages,
 		syncRuntimeState,
 	]);
 
@@ -945,11 +971,11 @@ export function useSessionController(
 			setCommandNotice("Wait for the active session to finish before redoing.");
 			return;
 		}
+		const revert = entry.revert;
 
 		const nextUserMessage = state.messages.find(
 			(message) =>
-				message.role === "user" &&
-				message.timestamp > entry.revert!.messageTimestamp,
+				message.role === "user" && message.timestamp > revert.messageTimestamp,
 		);
 		if (!nextUserMessage || nextUserMessage.role !== "user") {
 			unrevertSession(services, sessionId);
@@ -1056,14 +1082,14 @@ export function useSessionController(
 								)
 							: null) ?? activeModelRef.current;
 					if (model) {
-					const runtimeEntry =
-						sessionsRef.current.get(fallback.id) ??
-						buildSessionRuntime(
-							fallback.id,
-							model,
-							stored?.revert ?? fallback.revert,
-							stored?.messages,
-						);
+						const runtimeEntry =
+							sessionsRef.current.get(fallback.id) ??
+							buildSessionRuntime(
+								fallback.id,
+								model,
+								stored?.revert ?? fallback.revert,
+								stored?.messages,
+							);
 						if (!runtimeEntry) {
 							return;
 						}
@@ -1407,6 +1433,63 @@ export function useSessionController(
 					return;
 				}
 
+				if (slashCommand.command.name === FORK_COMMAND) {
+					const sessionId = activeSessionIdRef.current;
+					const currentEntry = sessionId
+						? (sessionsRef.current.get(sessionId) ?? null)
+						: null;
+					if (!sessionId || !currentEntry) {
+						setCommandNotice("No active session to fork.");
+						return;
+					}
+
+					if (state.isStreaming || currentEntry.composerShellAbort) {
+						setCommandNotice(
+							"Wait for the active session to finish before forking.",
+						);
+						return;
+					}
+
+					const visibleSessionMessages = getVisibleSessionMessages(
+						state.messages,
+						currentEntry.revert,
+					);
+					let forkTarget: ForkSessionTarget | null = null;
+					for (
+						let index = visibleSessionMessages.length - 1;
+						index >= 0;
+						index -= 1
+					) {
+						const message = visibleSessionMessages[index];
+						if (!message || message.role !== "user") {
+							continue;
+						}
+
+						const messageIndex = findUserMessageIndex(state.messages, {
+							timestamp: message.timestamp,
+							text: getUserMessageText(message),
+						});
+						if (messageIndex < 0) {
+							continue;
+						}
+
+						forkTarget = {
+							sessionId,
+							message,
+							messageIndex,
+						};
+						break;
+					}
+
+					if (!forkTarget) {
+						setCommandNotice("No user message to fork from.");
+						return;
+					}
+
+					void forkSessionAtMessage(forkTarget);
+					return;
+				}
+
 				if (slashCommand.command.name === RENAME_COMMAND) {
 					const sessionId = activeSessionIdRef.current;
 					if (!sessionId) {
@@ -1590,12 +1673,16 @@ export function useSessionController(
 			cleanupRuntimeRevert,
 			ensureActiveRuntime,
 			exitSession,
+			findUserMessageIndex,
+			forkSessionAtMessage,
 			maybeAutoRenameSession,
 			openRenameDialog,
 			pruneUnreferencedSnapshots,
 			resetSession,
 			selectModel,
 			services,
+			state.isStreaming,
+			state.messages,
 			syncRuntimeState,
 		],
 	);
@@ -1655,7 +1742,7 @@ export function useSessionController(
 	useKeyboard(handleKeyboardInput);
 
 	const activeSessionEntry = activeSessionId
-		? sessionsRef.current.get(activeSessionId) ?? null
+		? (sessionsRef.current.get(activeSessionId) ?? null)
 		: null;
 	const activeSessionRevert = activeSessionEntry?.revert ?? null;
 	const visibleMessages = useMemo(
@@ -1693,13 +1780,14 @@ export function useSessionController(
 
 	useEffect(() => {
 		let cancelled = false;
-		void buildSessionModifiedFiles(visibleMessages, services.workspaceRoot).then(
-			(rows) => {
-				if (!cancelled) {
-					setSessionSidebarModifiedFiles(rows);
-				}
-			},
-		);
+		void buildSessionModifiedFiles(
+			visibleMessages,
+			services.workspaceRoot,
+		).then((rows) => {
+			if (!cancelled) {
+				setSessionSidebarModifiedFiles(rows);
+			}
+		});
 		return () => {
 			cancelled = true;
 		};
@@ -1711,19 +1799,19 @@ export function useSessionController(
 			: undefined) ?? DEFAULT_SESSION_TITLE;
 	const revertBannerState = activeSessionRevert
 		? {
-			hiddenUserMessageCount: revertedUserMessages.length,
-			diff: activeSessionRevert.diff,
-		}
+				hiddenUserMessageCount: revertedUserMessages.length,
+				diff: activeSessionRevert.diff,
+			}
 		: null;
 	const messageActionsState = activeMessageAction
 		? {
-			revertDisabledReason: activeMessageAction.isBusy
-				? "wait for the active session to finish"
-				: undefined,
-			forkDisabledReason: activeMessageAction.isBusy
-				? "wait for the active session to finish"
-				: undefined,
-		}
+				revertDisabledReason: activeMessageAction.isBusy
+					? "wait for the active session to finish"
+					: undefined,
+				forkDisabledReason: activeMessageAction.isBusy
+					? "wait for the active session to finish"
+					: undefined,
+			}
 		: null;
 
 	const commandPickerState: CommandPickerState | null = (() => {

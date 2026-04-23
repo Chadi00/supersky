@@ -61,7 +61,9 @@ function createModel(provider: string, id: string, name: string): Model<Api> {
 
 class FakeAgentRuntime implements AgentRuntimeLike {
 	readonly cwd: string;
-	readonly toolDefinitions: ReturnType<typeof createBuiltInTools>["definitions"];
+	readonly toolDefinitions: ReturnType<
+		typeof createBuiltInTools
+	>["definitions"];
 	readonly agent: Agent;
 	readonly sessionId: string;
 
@@ -486,7 +488,9 @@ class FakeSessionStore implements SessionStoreLike {
 			snapshotId: patch.snapshotId,
 			files: [...patch.files],
 		});
-		patches.sort((left, right) => left.messageTimestamp - right.messageTimestamp);
+		patches.sort(
+			(left, right) => left.messageTimestamp - right.messageTimestamp,
+		);
 		this.patches.set(sessionId, patches);
 		const session = this.sessions.get(sessionId);
 		if (session) {
