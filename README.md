@@ -2,6 +2,8 @@
 
 **Supersky** is a small coding-agent harness (short system prompt, four tools: `read`, `edit`, `write`, `bash`) plus a fullscreen terminal UI on [OpenTUI](https://opentui.com) — the same TUI stack OpenCode uses. It takes cues from [pi.dev](https://pi.dev): a tight agent core, with sessions, slash commands, and keyboard shortcuts in the shell around it.
 
+![Supersky new session screen: pixel title, composer bar, and status line](docs/new-session-screen.png)
+
 ---
 
 ## Run it
