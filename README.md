@@ -50,4 +50,4 @@ bun run test
 bun run check    # lint, typecheck, and test
 ```
 
-Contributor-focused details: [`tui/README.md`](tui/README.md).
+More in [`tui/README.md`](tui/README.md).
