@@ -1,4 +1,3 @@
-import { getVisibleTranscriptMessages } from "../session/compaction.js";
 import type { AuthStorageLike } from "../session/providerState/authStorage";
 import {
 	Agent,
@@ -90,9 +89,6 @@ export class SuperskyAgentRuntime implements AgentRuntimeLike {
 				tools: tools.active,
 			},
 			convertToLlm: convertSuperskyAgentMessagesToLlm,
-			transformContext: async (messages) => {
-				return getVisibleTranscriptMessages(messages);
-			},
 			streamFn: async (model, context, streamOptions) => {
 				const apiKey = await this.options.authStorage.getApiKeyAsync(
 					model.provider,

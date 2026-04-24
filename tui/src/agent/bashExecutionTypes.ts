@@ -1,6 +1,14 @@
 import type { AgentMessage } from "../vendor/pi-agent-core/types.js";
 import type { Message, UserMessage } from "../vendor/pi-ai/index.js";
 
+const COMPACTION_SUMMARY_PREFIX = `The conversation history before this point was compacted into the following summary:
+
+<summary>
+`;
+
+const COMPACTION_SUMMARY_SUFFIX = `
+</summary>`;
+
 export interface BashExecutionMessage {
 	role: "bashExecution";
 	command: string;
@@ -41,6 +49,10 @@ export function bashExecutionToText(msg: BashExecutionMessage): string {
 	return text;
 }
 
+export function compactionSummaryToText(summary: string) {
+	return COMPACTION_SUMMARY_PREFIX + summary + COMPACTION_SUMMARY_SUFFIX;
+}
+
 /**
  * Maps transcript messages to LLM input. Bash lines from `!` become user text;
  * `!!` lines are omitted from the model context (still kept in the transcript).
@@ -65,6 +77,20 @@ export function convertSuperskyAgentMessagesToLlm(
 			const user: UserMessage = {
 				role: "user",
 				content: [{ type: "text", text: bashExecutionToText(message) }],
+				timestamp: message.timestamp,
+			};
+			result.push(user);
+			continue;
+		}
+		if (message.role === "compactionSummary") {
+			const user: UserMessage = {
+				role: "user",
+				content: [
+					{
+						type: "text",
+						text: compactionSummaryToText(message.summary),
+					},
+				],
 				timestamp: message.timestamp,
 			};
 			result.push(user);

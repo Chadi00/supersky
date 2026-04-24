@@ -6,6 +6,7 @@ import { appMetadata } from "./config";
 type AppFooterProps = {
 	isNewSession: boolean;
 	isRunning: boolean;
+	activityLabel?: string | null;
 	projectLine: string;
 	modelName: string | null;
 	onMouseDown?: () => void;
@@ -14,6 +15,7 @@ type AppFooterProps = {
 export function AppFooter({
 	isNewSession,
 	isRunning,
+	activityLabel,
 	projectLine,
 	modelName,
 	onMouseDown,
@@ -41,6 +43,9 @@ export function AppFooter({
 		>
 			<box flexDirection="row" alignItems="center" gap={1} minWidth={0}>
 				{isRunning ? <text fg={colors.accentText}>{spinnerFrame}</text> : null}
+				{isRunning && activityLabel ? (
+					<text fg={colors.accentText}>{activityLabel}</text>
+				) : null}
 				<text fg={colors.mutedText}>{projectLine}</text>
 			</box>
 			<text>

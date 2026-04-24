@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentMessage } from "../../vendor/pi-agent-core/index.js";
+import { createCompactionSummaryMessage } from "../compaction";
 import { SessionStore } from "./sessionStore";
 
 const workspaceRoot = "/tmp/supersky-test-workspace";
@@ -148,5 +149,133 @@ test("persists revert state and session patches", () => {
 
 		store.setSessionRevert("s-1", null);
 		expect(store.getSession("s-1")?.revert).toBeNull();
+	});
+});
+
+test("migrates legacy compacted sessions to full transcripts with compaction metadata", () => {
+	withStore((store) => {
+		store.createSession({
+			id: "s-1",
+			title: "Compacted",
+			workspaceRoot,
+			model: null,
+		});
+
+		const archivedMessages: AgentMessage[] = [
+			{
+				role: "user",
+				content: [{ type: "text", text: "old prompt" }],
+				timestamp: 1,
+			},
+			{
+				role: "assistant",
+				content: [{ type: "text", text: "old reply" }],
+				api: "openai-responses",
+				provider: "test-provider",
+				model: "test-model",
+				usage: {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 0,
+					cost: {
+						input: 0,
+						output: 0,
+						cacheRead: 0,
+						cacheWrite: 0,
+						total: 0,
+					},
+				},
+				stopReason: "stop",
+				timestamp: 2,
+			},
+		];
+		const tailMessages: AgentMessage[] = [
+			{
+				role: "user",
+				content: [{ type: "text", text: "recent prompt" }],
+				timestamp: 3,
+			},
+		];
+
+		store.replaceSessionArchivedMessages("s-1", archivedMessages);
+		store.replaceSessionMessages("s-1", [
+			createCompactionSummaryMessage({
+				summary: "## Goal\n- Preserve old work",
+				firstKeptMessageIndex: archivedMessages.length,
+				timestamp: 50,
+				tokensBefore: 200,
+			}),
+			...tailMessages,
+		]);
+
+		const session = store.getSession("s-1");
+
+		expect(session?.archivedMessages).toEqual([]);
+		expect(session?.messages).toEqual([...archivedMessages, ...tailMessages]);
+		expect(session?.compaction).toEqual({
+			summary: "## Goal\n- Preserve old work",
+			firstKeptMessageIndex: archivedMessages.length,
+			timestamp: 50,
+			tokensBefore: 200,
+		});
+	});
+});
+
+test("reloads compaction state with a transcript boundary index", () => {
+	withStore((store) => {
+		store.createSession({
+			id: "s-1",
+			title: "Compacted",
+			workspaceRoot,
+			model: null,
+		});
+
+		store.replaceSessionMessages("s-1", [
+			{
+				role: "user",
+				content: [{ type: "text", text: "before compact" }],
+				timestamp: 1,
+			},
+			{
+				role: "assistant",
+				content: [{ type: "text", text: "after compact" }],
+				api: "openai-responses",
+				provider: "test-provider",
+				model: "test-model",
+				usage: {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 0,
+					cost: {
+						input: 0,
+						output: 0,
+						cacheRead: 0,
+						cacheWrite: 0,
+						total: 0,
+					},
+				},
+				stopReason: "stop",
+				timestamp: 2,
+			},
+		]);
+		store.replaceSessionCompaction("s-1", {
+			summary: "## Goal\n- Keep context short",
+			firstKeptMessageIndex: 1,
+			transcriptBoundaryIndex: 1,
+			timestamp: 50,
+			tokensBefore: 200,
+		});
+
+		expect(store.getSession("s-1")?.compaction).toEqual({
+			summary: "## Goal\n- Keep context short",
+			firstKeptMessageIndex: 1,
+			transcriptBoundaryIndex: 1,
+			timestamp: 50,
+			tokensBefore: 200,
+		});
 	});
 });

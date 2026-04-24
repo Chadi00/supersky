@@ -13,9 +13,10 @@ export function getVisibleSessionMessages(
 	if (!revert) {
 		return [...messages];
 	}
-	return messages.filter(
-		(message) => message.timestamp < revert.messageTimestamp,
-	);
+	if (typeof revert.messageIndex === "number") {
+		return messages.slice(0, revert.messageIndex);
+	}
+	return messages.filter((message) => message.timestamp < revert.messageTimestamp);
 }
 
 export function getRevertedUserMessages(
@@ -24,6 +25,11 @@ export function getRevertedUserMessages(
 ) {
 	if (!revert) {
 		return [] as UserMessage[];
+	}
+	if (typeof revert.messageIndex === "number") {
+		return messages.slice(revert.messageIndex).filter(
+			(message): message is UserMessage => message.role === "user",
+		);
 	}
 	return messages.filter(
 		(message): message is UserMessage =>
@@ -41,6 +47,7 @@ export function applySessionRevert(
 	services: SessionServices,
 	sessionId: string,
 	messageTimestamp: number,
+	messageIndex: number,
 ) {
 	const session = services.sessionStore.getSession(sessionId);
 	if (!session) {
@@ -62,6 +69,7 @@ export function applySessionRevert(
 
 	const revert: SessionRevertState = {
 		messageTimestamp,
+		messageIndex,
 		snapshotId,
 		diff: services.workspaceSnapshotStore.diff(snapshotId),
 	};

@@ -19,6 +19,7 @@ import {
 
 type MessageListProps = {
 	messages: SessionState["messages"];
+	compactionBoundaryIndex?: number | null;
 	pendingBashMessages: BashExecutionMessage[];
 	pendingUserMessages: SessionState["pendingUserMessages"];
 	streamingMessage: SessionState["streamingMessage"];
@@ -32,12 +33,15 @@ type MessageListProps = {
 	onUserMessageMouseUp?: (message: UserMessage) => void;
 };
 
+const COMPACTION_BOUNDARY = "Compaction ──────";
+
 export function getUserMessageRowId(message: UserMessage) {
 	return `user-message-${message.timestamp}`;
 }
 
 export function MessageList({
 	messages,
+	compactionBoundaryIndex,
 	pendingBashMessages,
 	pendingUserMessages,
 	streamingMessage,
@@ -183,31 +187,15 @@ export function MessageList({
 		</box>
 	);
 
-	const renderCompactionSummary = (
-		message: Extract<
-			SessionState["messages"][number],
-			{ role: "compactionSummary" }
-		>,
-	) => (
+	const renderCompactionBoundary = (boundaryIndex: number) => (
 		<box
-			key={`compaction-${message.timestamp}`}
+			key={`compaction-${boundaryIndex}`}
 			flexDirection="column"
 			marginBottom={1}
 		>
-			<box
-				border
-				borderColor={colors.commandMenuBorder}
-				backgroundColor={colors.panelBackground}
-				paddingX={1}
-				paddingY={1}
-				flexDirection="column"
-			>
-				<text fg={colors.accentText}>Session compacted</text>
-				<text fg={colors.dimText}>{message.summary}</text>
-				<text
-					fg={colors.dimText}
-				>{`${message.archivedMessageCount} archived message${message.archivedMessageCount === 1 ? "" : "s"}`}</text>
-			</box>
+			<text fg={colors.accentText}>
+				{COMPACTION_BOUNDARY}
+			</text>
 		</box>
 	);
 
@@ -234,23 +222,33 @@ export function MessageList({
 			}}
 		>
 			<box flexDirection="column" padding={1} gap={0}>
-				{messages.map((message) =>
-					message.role === "user" ? (
-						renderUserMessage(message, "user")
-					) : message.role === "assistant" ? (
-						<AssistantMessage
-							key={getAssistantKey(message)}
-							message={message}
-							toolResultsByCallId={toolResultsByCallId}
-							liveToolExecutionsByCallId={liveToolExecutionsByCallId}
-							toolDefinitions={toolDefinitions}
-						/>
-					) : message.role === "bashExecution" ? (
-						renderBashExecution(message, "committed")
-					) : message.role === "compactionSummary" ? (
-						renderCompactionSummary(message)
-					) : null,
-				)}
+				{messages.flatMap((message, index) => {
+					const rows =
+						compactionBoundaryIndex === index
+							? [renderCompactionBoundary(index)]
+							: [];
+					const content =
+						message.role === "user" ? (
+							renderUserMessage(message, "user")
+						) : message.role === "assistant" ? (
+							<AssistantMessage
+								key={getAssistantKey(message)}
+								message={message}
+								toolResultsByCallId={toolResultsByCallId}
+								liveToolExecutionsByCallId={liveToolExecutionsByCallId}
+								toolDefinitions={toolDefinitions}
+							/>
+						) : message.role === "bashExecution" ? (
+							renderBashExecution(message, "committed")
+						) : null;
+					if (content) {
+						rows.push(content);
+					}
+					return rows;
+				})}
+				{compactionBoundaryIndex === messages.length
+					? renderCompactionBoundary(compactionBoundaryIndex)
+					: null}
 				{pendingBashMessages.map((message) =>
 					renderBashExecution(message, "pending-bash"),
 				)}

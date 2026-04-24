@@ -51,9 +51,13 @@ import {
 	VARIANTS_COMMAND,
 } from "./commands";
 import {
-	buildFullTranscriptMessages,
+	buildRuntimeContextMessages,
+	buildTranscriptMessagesFromRuntime,
 	compactSession,
-	getVisibleTranscriptMessages,
+	getCompactionBoundaryIndex,
+	getEffectiveCompactionState,
+	type SessionCompactionState,
+	truncateCompactionState,
 } from "./compaction";
 import { buildSessionSidebarUsageLines } from "./contextUsageDisplay";
 import type { LoginDialogLineTone, LoginDialogState } from "./LoginDialog";
@@ -131,6 +135,8 @@ type SessionRuntimeEntry = {
 	id: string;
 	title: string;
 	revert: SessionRevertState | null;
+	transcriptMessages: AgentMessage[];
+	compaction: SessionCompactionState | null;
 	pendingTurnSnapshotId: string | null;
 	runtime: AgentRuntimeLike;
 	toolExecutions: Map<string, ToolExecutionState>;
@@ -251,7 +257,6 @@ function createRuntimeSnapshot(
 ) {
 	const streamingMessage = runtime.agent.state.streamingMessage;
 	return {
-		messages: runtime.agent.state.messages.slice(),
 		pendingBashMessages,
 		streamingMessage:
 			streamingMessage && streamingMessage.role === "assistant"
@@ -281,14 +286,14 @@ export function useSessionController(
 	const loginLineIdRef = useRef(0);
 	const sessionRenameValueRef = useRef("");
 	const [commandNotice, setCommandNotice] = useState<string | null>(null);
+	const [isCompacting, setIsCompacting] = useState(false);
 	const [dismissComposerMenuToken, setDismissComposerMenuToken] = useState(0);
 	const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
 	const [showWelcomeScreen, setShowWelcomeScreen] = useState(true);
 	const [sessionSidebarModifiedFiles, setSessionSidebarModifiedFiles] =
 		useState<SessionModifiedFile[]>([]);
 	const [pickerStack, setPickerStack] = useState<ActivePickerState[]>([]);
-	const activePicker =
-		pickerStack.length > 0 ? pickerStack[pickerStack.length - 1]! : null;
+	const activePicker = pickerStack.at(-1) ?? null;
 	const [showHotkeysDialog, setShowHotkeysDialog] = useState(false);
 	const [exportConfirmDialog, setExportConfirmDialog] = useState<{
 		exportPath: string;
@@ -330,12 +335,14 @@ export function useSessionController(
 	);
 
 	const activePickerRef = useRef<ActivePickerState | null>(null);
+	const isCompactingRef = useRef(isCompacting);
 	const activeModelRef = useRef<Model<Api> | null>(activeModel);
 	const activeThinkingLevelRef = useRef<ThinkingLevel>(activeThinkingLevel);
 	const loginDialogStateRef = useRef<LoginDialogState | null>(loginDialogState);
 	const activeSessionIdRef = useRef<string | null>(activeSessionId);
 
 	activePickerRef.current = activePicker;
+	isCompactingRef.current = isCompacting;
 	activeModelRef.current = activeModel;
 	activeThinkingLevelRef.current = activeThinkingLevel;
 	loginDialogStateRef.current = loginDialogState;
@@ -374,6 +381,8 @@ export function useSessionController(
 		}
 		dispatch({
 			type: "runtimeStateReplaced",
+			messages:
+				activeEntry?.transcriptMessages ?? runtime.agent.state.messages.slice(),
 			...createRuntimeSnapshot(
 				runtime,
 				activeEntry?.toolExecutions ?? new Map(),
@@ -413,8 +422,13 @@ export function useSessionController(
 			model: Model<Api> | null,
 			thinkingLevel: ThinkingLevel,
 			revert: SessionRevertState | null,
-			initialMessages?: AgentMessage[],
+			transcriptMessages: AgentMessage[] = [],
+			compaction: SessionCompactionState | null = null,
 		) => {
+			const initialMessages = buildRuntimeContextMessages({
+				messages: transcriptMessages,
+				compaction,
+			});
 			const runtime =
 				services.createRuntime?.(model, {
 					sessionId,
@@ -435,6 +449,21 @@ export function useSessionController(
 				return null;
 			}
 			const toolExecutions = new Map<string, ToolExecutionState>();
+			const persistSessionState = (entry: SessionRuntimeEntry) => {
+				entry.transcriptMessages = buildTranscriptMessagesFromRuntime({
+					transcriptMessages: entry.transcriptMessages,
+					runtimeMessages: runtime.agent.state.messages,
+					compaction: entry.compaction,
+				});
+				services.sessionStore.replaceSessionMessages(
+					sessionId,
+					entry.transcriptMessages,
+				);
+				services.sessionStore.replaceSessionCompaction(
+					sessionId,
+					entry.compaction,
+				);
+			};
 			const unsubscribe = runtime.subscribe((event: AgentEvent) => {
 				try {
 					const entry = sessionsRef.current.get(sessionId);
@@ -508,10 +537,7 @@ export function useSessionController(
 							break;
 						}
 					}
-					services.sessionStore.replaceSessionMessages(
-						sessionId,
-						runtime.agent.state.messages,
-					);
+					persistSessionState(entry);
 					if (activeSessionIdRef.current === sessionId) {
 						syncRuntimeState();
 					}
@@ -525,6 +551,8 @@ export function useSessionController(
 				id: sessionId,
 				title: "New session",
 				revert,
+				transcriptMessages: transcriptMessages.slice(),
+				compaction,
 				pendingTurnSnapshotId: null,
 				runtime,
 				toolExecutions,
@@ -544,6 +572,9 @@ export function useSessionController(
 			if (!entry) return null;
 			setMessageActionTarget(null);
 			runtimeRef.current = entry.runtime;
+			activeModelRef.current = entry.runtime.agent.state.model;
+			activeThinkingLevelRef.current = entry.runtime.agent.state.thinkingLevel;
+			activeSessionIdRef.current = sessionId;
 			setActiveModel(entry.runtime.agent.state.model);
 			setActiveThinkingLevel(entry.runtime.agent.state.thinkingLevel);
 			setActiveSessionId(sessionId);
@@ -559,7 +590,8 @@ export function useSessionController(
 		(
 			model: Model<Api> | null,
 			options?: {
-				initialMessages?: AgentMessage[];
+				initialTranscriptMessages?: AgentMessage[];
+				initialCompaction?: SessionCompactionState | null;
 				thinkingLevel?: ThinkingLevel;
 				parentSessionId?: string | null;
 			},
@@ -576,7 +608,8 @@ export function useSessionController(
 				model,
 				thinkingLevel,
 				null,
-				options?.initialMessages,
+				options?.initialTranscriptMessages,
+				options?.initialCompaction ?? null,
 			);
 			if (!entry) {
 				return null;
@@ -589,10 +622,16 @@ export function useSessionController(
 				thinkingLevel,
 				parentSessionId: options?.parentSessionId,
 			});
-			if (options?.initialMessages) {
+			if (options?.initialTranscriptMessages) {
 				services.sessionStore.replaceSessionMessages(
 					sessionId,
-					options.initialMessages,
+					options.initialTranscriptMessages,
+				);
+			}
+			if (options?.initialCompaction) {
+				services.sessionStore.replaceSessionCompaction(
+					sessionId,
+					options.initialCompaction,
 				);
 			}
 			activateSession(sessionId);
@@ -628,14 +667,26 @@ export function useSessionController(
 			const nextMessages = cleanupSessionRevert(
 				services,
 				sessionId,
-				entry.runtime.agent.state.messages,
+				entry.transcriptMessages,
 			);
 			entry.revert = null;
+			entry.transcriptMessages = nextMessages;
+			entry.compaction = truncateCompactionState(
+				entry.compaction,
+				nextMessages.length,
+			);
 			entry.pendingBashMessages = [];
 			entry.pendingTurnSnapshotId = null;
 			entry.toolExecutions.clear();
 			entry.runtime.reset();
-			entry.runtime.agent.state.messages = nextMessages;
+			entry.runtime.agent.state.messages = buildRuntimeContextMessages({
+				messages: nextMessages,
+				compaction: entry.compaction,
+			});
+			services.sessionStore.replaceSessionCompaction(
+				sessionId,
+				entry.compaction,
+			);
 			if (activeSessionIdRef.current === sessionId) {
 				syncRuntimeState();
 			}
@@ -667,6 +718,7 @@ export function useSessionController(
 				stored?.thinkingLevel ?? target.thinkingLevel,
 				stored?.revert ?? target.revert,
 				stored?.messages,
+				stored?.compaction ?? null,
 			);
 			if (!entry) {
 				syncRuntimeState();
@@ -934,8 +986,13 @@ export function useSessionController(
 
 	const exportSessionTranscript = useCallback(async () => {
 		const sessionId = activeSessionIdRef.current;
+		const entry = sessionId ? sessionsRef.current.get(sessionId) : null;
 		if (!sessionId) {
 			setCommandNotice("No active session to export.");
+			return;
+		}
+		if (entry?.revert) {
+			setCommandNotice("Clear the current revert state before exporting.");
 			return;
 		}
 
@@ -949,10 +1006,6 @@ export function useSessionController(
 			stored.modelProvider && stored.modelId
 				? `${stored.modelProvider}/${stored.modelId}`
 				: null;
-		const transcriptMessages = buildFullTranscriptMessages({
-			archivedMessages: stored.archivedMessages,
-			messages: stored.messages,
-		});
 		const markdown = [
 			transcriptHeaderMarkdown({
 				title: stored.title,
@@ -963,7 +1016,7 @@ export function useSessionController(
 				modelLabel,
 				thinkingLevel: stored.thinkingLevel,
 			}),
-			...transcriptMessages
+			...stored.messages
 				.map((message) => messageToTranscriptMarkdown(message))
 				.filter(Boolean)
 				.map((block) => `${block}\n\n---`),
@@ -1098,14 +1151,20 @@ export function useSessionController(
 		async (target: ForkSessionTarget) => {
 			try {
 				const currentEntry = sessionsRef.current.get(target.sessionId);
-				const nextMessages = state.messages.slice(0, target.messageIndex);
+				const nextMessages =
+					currentEntry?.transcriptMessages.slice(0, target.messageIndex) ?? [];
+				const nextCompaction = truncateCompactionState(
+					currentEntry?.compaction,
+					nextMessages.length,
+				);
 				const nextTitle = getForkedTitle(
 					currentEntry?.title ?? DEFAULT_SESSION_TITLE,
 				);
 				const runtime = createAndActivateSession(
 					currentEntry?.runtime.agent.state.model ?? activeModelRef.current,
 					{
-						initialMessages: nextMessages,
+						initialTranscriptMessages: nextMessages,
+						initialCompaction: nextCompaction,
 						parentSessionId: target.sessionId,
 					},
 				);
@@ -1121,6 +1180,10 @@ export function useSessionController(
 				services.sessionStore.replaceSessionMessages(
 					runtime.sessionId,
 					nextMessages,
+				);
+				services.sessionStore.replaceSessionCompaction(
+					runtime.sessionId,
+					nextCompaction,
 				);
 				services.sessionStore.replaceSessionPatches(
 					runtime.sessionId,
@@ -1139,13 +1202,7 @@ export function useSessionController(
 				);
 			}
 		},
-		[
-			closeMessageActions,
-			createAndActivateSession,
-			services,
-			setDraft,
-			state.messages,
-		],
+		[closeMessageActions, createAndActivateSession, services, setDraft],
 	);
 
 	const copyMessageFromActions = useCallback(async () => {
@@ -1194,6 +1251,7 @@ export function useSessionController(
 				services,
 				activeMessageAction.sessionId,
 				activeMessageAction.message.timestamp,
+				activeMessageAction.messageIndex,
 			);
 			setDraft(getUserMessageText(activeMessageAction.message));
 			closeMessageActions();
@@ -1223,11 +1281,12 @@ export function useSessionController(
 			return;
 		}
 		const revert = entry.revert;
-
-		const nextUserMessage = state.messages.find(
-			(message) =>
-				message.role === "user" && message.timestamp > revert.messageTimestamp,
+		const nextUserIndex = state.messages.findIndex(
+			(message, index) =>
+				index > (revert.messageIndex ?? -1) && message.role === "user",
 		);
+		const nextUserMessage =
+			nextUserIndex >= 0 ? state.messages[nextUserIndex] : null;
 		if (!nextUserMessage || nextUserMessage.role !== "user") {
 			unrevertSession(services, sessionId);
 			entry.revert = null;
@@ -1240,6 +1299,7 @@ export function useSessionController(
 			services,
 			sessionId,
 			nextUserMessage.timestamp,
+			nextUserIndex,
 		);
 		syncRuntimeState();
 	}, [services, setDraft, state.isStreaming, state.messages, syncRuntimeState]);
@@ -1348,6 +1408,7 @@ export function useSessionController(
 								stored?.thinkingLevel ?? fallback.thinkingLevel,
 								stored?.revert ?? fallback.revert,
 								stored?.messages,
+								stored?.compaction ?? null,
 							);
 						if (!runtimeEntry) {
 							return;
@@ -1647,6 +1708,11 @@ export function useSessionController(
 				return;
 			}
 
+			if (isCompactingRef.current) {
+				setCommandNotice("Wait for compaction to finish.");
+				return;
+			}
+
 			const slashCommand = parseSubmittedSlashCommand(text);
 			if (slashCommand) {
 				if (slashCommand.command.name === NEW_SESSION_COMMAND) {
@@ -1907,10 +1973,18 @@ export function useSessionController(
 						if (currentRuntime.agent.state.isStreaming) {
 							currentEntry.pendingBashMessages.push(bashMessage);
 						} else {
+							currentEntry.transcriptMessages = [
+								...currentEntry.transcriptMessages,
+								bashMessage,
+							];
 							currentRuntime.agent.state.messages.push(bashMessage);
 							services.sessionStore.replaceSessionMessages(
 								sessionId,
-								currentRuntime.agent.state.messages,
+								currentEntry.transcriptMessages,
+							);
+							services.sessionStore.replaceSessionCompaction(
+								sessionId,
+								currentEntry.compaction,
 							);
 						}
 						const shellPatch = services.workspaceSnapshotStore.patch(
@@ -2076,6 +2150,38 @@ export function useSessionController(
 		() => getVisibleSessionMessages(state.messages, activeSessionRevert),
 		[activeSessionRevert, state.messages],
 	);
+	const visibleCompaction = getEffectiveCompactionState(
+		activeSessionEntry?.compaction ?? null,
+		visibleMessages.length,
+	);
+	const visibleCompactionBoundaryIndex = getCompactionBoundaryIndex(
+		visibleCompaction,
+		visibleMessages.length,
+	);
+	const contextMessages = useMemo(
+		() =>
+			buildRuntimeContextMessages({
+				messages: visibleMessages,
+				compaction: visibleCompaction,
+			}),
+		[visibleCompaction, visibleMessages],
+	);
+	const requestContextMessages = useMemo(
+		() =>
+			state.streamingMessage
+				? contextMessages
+				: [
+						...contextMessages,
+						...state.pendingBashMessages,
+						...state.pendingUserMessages,
+					],
+		[
+			contextMessages,
+			state.pendingBashMessages,
+			state.pendingUserMessages,
+			state.streamingMessage,
+		],
+	);
 	const copyLastAssistantMessage = useCallback(async () => {
 		for (let index = visibleMessages.length - 1; index >= 0; index -= 1) {
 			const message = visibleMessages[index];
@@ -2122,46 +2228,48 @@ export function useSessionController(
 			);
 			return;
 		}
+		setIsCompacting(true);
+		setCommandNotice(null);
 
-		const stored = services.sessionStore.getSession(sessionId);
-		if (!stored) {
-			setCommandNotice("Unable to load the active session for compaction.");
-			return;
+		try {
+			const result = await compactSession({
+				model,
+				authStorage: services.authStorage,
+				sessionId,
+				transcriptMessages: entry.transcriptMessages,
+				compaction: entry.compaction,
+				thinkingLevel: activeThinkingLevelRef.current,
+			});
+			if (!result) {
+				setCommandNotice("Session is already compact enough.");
+				return;
+			}
+
+			entry.pendingBashMessages = [];
+			entry.pendingTurnSnapshotId = null;
+			entry.toolExecutions.clear();
+			entry.compaction = result.compaction;
+			entry.runtime.reset();
+			entry.runtime.setModel(model);
+			entry.runtime.setThinkingLevel(activeThinkingLevelRef.current);
+			entry.runtime.agent.state.messages = buildRuntimeContextMessages({
+				messages: entry.transcriptMessages,
+				compaction: entry.compaction,
+			});
+			services.sessionStore.replaceSessionMessages(
+				sessionId,
+				entry.transcriptMessages,
+			);
+			services.sessionStore.replaceSessionCompaction(
+				sessionId,
+				entry.compaction,
+			);
+			syncRuntimeState();
+			setCommandNotice("Session compacted.");
+		} finally {
+			setIsCompacting(false);
 		}
-
-		const result = await compactSession({
-			model,
-			authStorage: services.authStorage,
-			sessionId,
-			visibleMessages: getVisibleTranscriptMessages(visibleMessages),
-			archivedMessages: stored.archivedMessages,
-			thinkingLevel: activeThinkingLevelRef.current,
-		});
-		if (!result) {
-			setCommandNotice("Session is already compact enough.");
-			return;
-		}
-
-		entry.pendingBashMessages = [];
-		entry.pendingTurnSnapshotId = null;
-		entry.toolExecutions.clear();
-		entry.runtime.reset();
-		entry.runtime.setModel(model);
-		entry.runtime.setThinkingLevel(activeThinkingLevelRef.current);
-		entry.runtime.agent.state.messages = result.compactedMessages.slice();
-		services.sessionStore.replaceSessionArchivedMessages(
-			sessionId,
-			result.archivedMessages,
-		);
-		services.sessionStore.replaceSessionMessages(
-			sessionId,
-			result.compactedMessages,
-		);
-		syncRuntimeState();
-		setCommandNotice(
-			`Compacted session. Summarized ${result.hiddenMessageCount} message${result.hiddenMessageCount === 1 ? "" : "s"}.`,
-		);
-	}, [services, state.isStreaming, syncRuntimeState, visibleMessages]);
+	}, [services, state.isStreaming, syncRuntimeState]);
 	compactCurrentSessionRef.current = compactCurrentSession;
 	const revertedUserMessages = useMemo(
 		() => getRevertedUserMessages(state.messages, activeSessionRevert),
@@ -2179,15 +2287,16 @@ export function useSessionController(
 		() =>
 			buildSessionSidebarUsageLines(
 				activeModel,
-				[...visibleMessages, ...state.pendingBashMessages],
+				requestContextMessages,
+				visibleMessages,
 				state.streamingMessage,
 				activeModel ? services.modelRegistry.isUsingOAuth(activeModel) : false,
 			),
 		[
 			activeModel,
-			state.pendingBashMessages,
-			state.streamingMessage,
+			requestContextMessages,
 			visibleMessages,
+			state.streamingMessage,
 			services.modelRegistry,
 		],
 	);
@@ -2475,6 +2584,7 @@ export function useSessionController(
 					stored.thinkingLevel,
 					stored.revert,
 					stored.messages,
+					stored.compaction,
 				);
 				if (!entry) {
 					return;
@@ -2558,7 +2668,9 @@ export function useSessionController(
 
 	return {
 		state,
+		isCompacting,
 		visibleMessages,
+		visibleCompactionBoundaryIndex,
 		revertBannerState,
 		sessionSidebarUsage,
 		sessionSidebarModifiedFiles,

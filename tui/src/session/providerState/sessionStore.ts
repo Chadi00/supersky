@@ -3,6 +3,12 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { AgentMessage } from "../../vendor/pi-agent-core/index.js";
 import type { ThinkingLevel } from "../../vendor/pi-agent-core/types.js";
+import {
+	getVisibleTranscriptMessages,
+	isCompactionSummaryMessage,
+	type SessionCompactionState,
+} from "../compaction";
+import { estimateContextTokens } from "../contextUsageDisplay";
 import { getSessionsDbPath } from "./paths";
 import type { Api, Model } from "./piSource";
 
@@ -17,7 +23,9 @@ type SessionRow = {
 	parent_session_id: string | null;
 	thinking_level: ThinkingLevel;
 	archived_messages_json: string | null;
+	compaction_state_json: string | null;
 	revert_message_timestamp: number | null;
+	revert_message_index: number | null;
 	revert_snapshot_id: string | null;
 	revert_diff: string | null;
 };
@@ -30,6 +38,7 @@ type SessionPatchRow = {
 
 export type SessionRevertState = {
 	messageTimestamp: number;
+	messageIndex?: number;
 	snapshotId: string;
 	diff: string;
 };
@@ -55,6 +64,7 @@ export type SessionSummary = {
 
 export type StoredSession = SessionSummary & {
 	archivedMessages: AgentMessage[];
+	compaction: SessionCompactionState | null;
 	messages: AgentMessage[];
 };
 
@@ -81,6 +91,10 @@ export interface SessionStoreLike {
 		sessionId: string,
 		messages: AgentMessage[],
 	): void;
+	replaceSessionCompaction(
+		sessionId: string,
+		compaction: SessionCompactionState | null,
+	): void;
 	replaceSessionMessages(sessionId: string, messages: AgentMessage[]): void;
 	listSessionPatches(sessionId: string): SessionPatch[];
 	replaceSessionPatches(sessionId: string, patches: SessionPatch[]): void;
@@ -103,9 +117,42 @@ function mapRevert(row: SessionRow): SessionRevertState | null {
 
 	return {
 		messageTimestamp: row.revert_message_timestamp,
+		...(row.revert_message_index === null
+			? {}
+			: { messageIndex: row.revert_message_index }),
 		snapshotId: row.revert_snapshot_id,
 		diff: row.revert_diff,
 	};
+}
+
+function parseCompactionState(compactionJson: string | null) {
+	if (!compactionJson) {
+		return null as SessionCompactionState | null;
+	}
+
+	try {
+		const parsed = JSON.parse(compactionJson) as unknown;
+		if (
+			typeof parsed === "object" &&
+			parsed !== null &&
+			"summary" in parsed &&
+			"firstKeptMessageIndex" in parsed &&
+			"timestamp" in parsed &&
+			"tokensBefore" in parsed &&
+			typeof parsed.summary === "string" &&
+			typeof parsed.firstKeptMessageIndex === "number" &&
+			typeof parsed.timestamp === "number" &&
+			typeof parsed.tokensBefore === "number" &&
+			(!("transcriptBoundaryIndex" in parsed) ||
+				typeof parsed.transcriptBoundaryIndex === "number")
+		) {
+			return parsed as SessionCompactionState;
+		}
+	} catch {
+		// Ignore malformed rows and treat them as uncompacted.
+	}
+
+	return null as SessionCompactionState | null;
 }
 
 function mapSessionRow(row: SessionRow): SessionSummary {
@@ -179,7 +226,9 @@ export class SessionStore implements SessionStoreLike {
 				parent_session_id TEXT,
 				thinking_level TEXT NOT NULL DEFAULT 'medium',
 				archived_messages_json TEXT,
+				compaction_state_json TEXT,
 				revert_message_timestamp INTEGER,
+				revert_message_index INTEGER,
 				revert_snapshot_id TEXT,
 				revert_diff TEXT
 			);
@@ -230,8 +279,16 @@ export class SessionStore implements SessionStoreLike {
 			"ALTER TABLE session ADD COLUMN archived_messages_json TEXT",
 		);
 		ensureColumn(
+			"compaction_state_json",
+			"ALTER TABLE session ADD COLUMN compaction_state_json TEXT",
+		);
+		ensureColumn(
 			"revert_message_timestamp",
 			"ALTER TABLE session ADD COLUMN revert_message_timestamp INTEGER",
+		);
+		ensureColumn(
+			"revert_message_index",
+			"ALTER TABLE session ADD COLUMN revert_message_index INTEGER",
 		);
 		ensureColumn(
 			"revert_snapshot_id",
@@ -243,12 +300,72 @@ export class SessionStore implements SessionStoreLike {
 		);
 	}
 
+	private persistMigratedSessionState(input: {
+		sessionId: string;
+		updatedAt: number;
+		archivedMessages: AgentMessage[];
+		compaction: SessionCompactionState | null;
+		revert: SessionRevertState | null;
+		messages: AgentMessage[];
+	}) {
+		const transaction = this.db.transaction(
+			(options: {
+				sessionId: string;
+				updatedAt: number;
+				archivedMessages: AgentMessage[];
+				compaction: SessionCompactionState | null;
+				revert: SessionRevertState | null;
+				messages: AgentMessage[];
+			}) => {
+				this.db
+					.query(
+						`UPDATE session
+						 SET archived_messages_json = ?,
+						     compaction_state_json = ?,
+						     revert_message_timestamp = ?,
+						     revert_message_index = ?,
+						     revert_snapshot_id = ?,
+						     revert_diff = ?,
+						     updated_at = ?
+						 WHERE id = ?`,
+					)
+					.run(
+						JSON.stringify(options.archivedMessages),
+						options.compaction ? JSON.stringify(options.compaction) : null,
+						options.revert?.messageTimestamp ?? null,
+						options.revert?.messageIndex ?? null,
+						options.revert?.snapshotId ?? null,
+						options.revert?.diff ?? null,
+						options.updatedAt,
+						options.sessionId,
+					);
+
+				this.db
+					.query("DELETE FROM message WHERE session_id = ?")
+					.run(options.sessionId);
+				const insert = this.db.query(
+					"INSERT INTO message (session_id, seq, payload) VALUES (?, ?, ?)",
+				);
+				for (let index = 0; index < options.messages.length; index += 1) {
+					insert.run(
+						options.sessionId,
+						index,
+						JSON.stringify(options.messages[index]),
+					);
+				}
+			},
+		);
+
+		transaction(input);
+	}
+
 	listSessions(limit = 200): SessionSummary[] {
 		const rows = this.db
 			.query(
 				`SELECT id, title, created_at, updated_at, model_provider, model_id,
 				        workspace_root, parent_session_id, thinking_level,
-				        archived_messages_json, revert_message_timestamp,
+				        archived_messages_json, compaction_state_json,
+				        revert_message_timestamp, revert_message_index,
 				        revert_snapshot_id, revert_diff
 				 FROM session
 				 ORDER BY updated_at DESC
@@ -263,7 +380,8 @@ export class SessionStore implements SessionStoreLike {
 			.query(
 				`SELECT id, title, created_at, updated_at, model_provider, model_id,
 				        workspace_root, parent_session_id, thinking_level,
-				        archived_messages_json, revert_message_timestamp,
+				        archived_messages_json, compaction_state_json,
+				        revert_message_timestamp, revert_message_index,
 				        revert_snapshot_id, revert_diff
 				 FROM session
 				 WHERE id = ?`,
@@ -275,12 +393,106 @@ export class SessionStore implements SessionStoreLike {
 		const messagesRows = this.db
 			.query("SELECT payload FROM message WHERE session_id = ? ORDER BY seq")
 			.all(sessionId) as Array<{ payload: string }>;
+		let archivedMessages = parseArchivedMessages(row.archived_messages_json);
+		let messages = messagesRows.map(
+			(entry) => JSON.parse(entry.payload) as AgentMessage,
+		);
+		let compaction = parseCompactionState(row.compaction_state_json);
+		let revert = mapRevert(row);
+		let migrated = false;
+
+		if (
+			archivedMessages.length > 0 ||
+			messages.some(isCompactionSummaryMessage)
+		) {
+			const summaryMessage = messages.find(isCompactionSummaryMessage) ?? null;
+			messages = [
+				...archivedMessages,
+				...getVisibleTranscriptMessages(messages),
+			];
+			compaction = summaryMessage
+				? {
+						summary: summaryMessage.summary,
+						firstKeptMessageIndex: archivedMessages.length,
+						timestamp: summaryMessage.timestamp,
+						tokensBefore:
+							typeof summaryMessage.tokensBefore === "number"
+								? summaryMessage.tokensBefore
+								: estimateContextTokens(messages).tokens,
+					}
+				: compaction;
+			archivedMessages = [];
+			migrated = true;
+		}
+
+		if (
+			compaction &&
+			(compaction.firstKeptMessageIndex <= 0 ||
+				compaction.firstKeptMessageIndex >= messages.length)
+		) {
+			compaction = null;
+			migrated = true;
+		}
+
+		if (
+			compaction &&
+			(!Number.isFinite(compaction.tokensBefore) ||
+				compaction.tokensBefore <= 0)
+		) {
+			compaction = {
+				...compaction,
+				tokensBefore: estimateContextTokens(messages).tokens,
+			};
+			migrated = true;
+		}
+
+		if (
+			compaction &&
+			compaction.transcriptBoundaryIndex !== undefined &&
+			(!Number.isFinite(compaction.transcriptBoundaryIndex) ||
+				compaction.transcriptBoundaryIndex <= 0 ||
+				compaction.transcriptBoundaryIndex > messages.length)
+		) {
+			const { transcriptBoundaryIndex: _transcriptBoundaryIndex, ...next } =
+				compaction;
+			compaction = next;
+			migrated = true;
+		}
+
+		if (revert && revert.messageIndex === undefined && messages.length > 0) {
+			const revertTimestamp = revert.messageTimestamp;
+			const messageIndex = messages.findIndex(
+				(message) => message.timestamp >= revertTimestamp,
+			);
+			revert = messageIndex >= 0 ? { ...revert, messageIndex } : null;
+			migrated = true;
+		}
+
+		if (migrated) {
+			this.persistMigratedSessionState({
+				sessionId,
+				updatedAt: row.updated_at,
+				archivedMessages,
+				compaction,
+				revert,
+				messages,
+			});
+		}
+
 		return {
-			...mapSessionRow(row),
-			archivedMessages: parseArchivedMessages(row.archived_messages_json),
-			messages: messagesRows.map(
-				(entry) => JSON.parse(entry.payload) as AgentMessage,
-			),
+			id: row.id,
+			title: row.title,
+			createdAt: row.created_at,
+			updatedAt: row.updated_at,
+			modelProvider: row.model_provider,
+			modelId: row.model_id,
+			workspaceRoot: row.workspace_root,
+			parentSessionId: row.parent_session_id,
+			thinkingLevel: row.thinking_level,
+			revert,
+			archivedMessages,
+			compaction,
+			messages,
 		};
 	}
 
@@ -299,9 +511,10 @@ export class SessionStore implements SessionStoreLike {
 				`INSERT INTO session (
 					id, title, created_at, updated_at, model_provider, model_id,
 					workspace_root, parent_session_id, thinking_level,
-					archived_messages_json, revert_message_timestamp,
+					archived_messages_json, compaction_state_json,
+					revert_message_timestamp, revert_message_index,
 					revert_snapshot_id, revert_diff
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL)`,
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL)`,
 			)
 			.run(
 				input.id,
@@ -354,11 +567,12 @@ export class SessionStore implements SessionStoreLike {
 		this.db
 			.query(
 				`UPDATE session
-				 SET revert_message_timestamp = ?, revert_snapshot_id = ?, revert_diff = ?, updated_at = ?
+				 SET revert_message_timestamp = ?, revert_message_index = ?, revert_snapshot_id = ?, revert_diff = ?, updated_at = ?
 				 WHERE id = ?`,
 			)
 			.run(
 				revert?.messageTimestamp ?? null,
+				revert?.messageIndex ?? null,
 				revert?.snapshotId ?? null,
 				revert?.diff ?? null,
 				Date.now(),
@@ -372,6 +586,21 @@ export class SessionStore implements SessionStoreLike {
 				"UPDATE session SET archived_messages_json = ?, updated_at = ? WHERE id = ?",
 			)
 			.run(JSON.stringify(messages), Date.now(), sessionId);
+	}
+
+	replaceSessionCompaction(
+		sessionId: string,
+		compaction: SessionCompactionState | null,
+	) {
+		this.db
+			.query(
+				"UPDATE session SET compaction_state_json = ?, updated_at = ? WHERE id = ?",
+			)
+			.run(
+				compaction ? JSON.stringify(compaction) : null,
+				Date.now(),
+				sessionId,
+			);
 	}
 
 	replaceSessionMessages(sessionId: string, messages: AgentMessage[]) {

@@ -8,15 +8,22 @@ import {
 	type Model,
 } from "../vendor/pi-ai/index.js";
 import { supportsXhigh } from "../vendor/pi-ai/models.js";
-import { estimateTokens } from "./contextUsageDisplay";
+import { estimateContextTokens, estimateTokens } from "./contextUsageDisplay";
 import type { Api } from "./providerState/piSource";
+
+export interface SessionCompactionState {
+	summary: string;
+	firstKeptMessageIndex: number;
+	transcriptBoundaryIndex?: number;
+	timestamp: number;
+	tokensBefore: number;
+}
 
 export interface CompactionSummaryMessage {
 	role: "compactionSummary";
 	summary: string;
 	timestamp: number;
-	hiddenMessageCount: number;
-	archivedMessageCount: number;
+	tokensBefore: number;
 }
 
 declare module "../vendor/pi-agent-core/types.js" {
@@ -122,21 +129,6 @@ function sumEstimatedTokens(messages: AgentMessage[]) {
 	return total;
 }
 
-function splitTurn(messages: AgentMessage[], turn: Turn, budget: number) {
-	if (budget <= 0 || turn.end - turn.start <= 1) {
-		return undefined;
-	}
-
-	for (let start = turn.start + 1; start < turn.end; start += 1) {
-		const size = sumEstimatedTokens(messages.slice(start, turn.end));
-		if (size <= budget) {
-			return start;
-		}
-	}
-
-	return undefined;
-}
-
 function selectTail(
 	messages: AgentMessage[],
 	model: Model<Api>,
@@ -158,18 +150,18 @@ function selectTail(
 		}
 
 		const size = sumEstimatedTokens(messages.slice(turn.start, turn.end));
-		if (total + size <= budget) {
-			total += size;
+		if (keepIndex === undefined) {
 			keepIndex = turn.start;
+			total += size;
 			continue;
 		}
 
-		const remainingBudget = budget - total;
-		const splitIndex = splitTurn(messages, turn, remainingBudget);
-		if (splitIndex !== undefined) {
-			keepIndex = splitIndex;
+		if (total + size > budget) {
+			break;
 		}
-		break;
+
+		total += size;
+		keepIndex = turn.start;
 	}
 
 	if (keepIndex === undefined || keepIndex <= 0) {
@@ -225,7 +217,11 @@ function serializeMessage(message: AgentMessage) {
 	}
 
 	if (message.role === "bashExecution") {
-		return `[Shell ${message.excludeFromContext ? "(excluded)" : ""}]\n$ ${message.command}\n${message.output}`.trim();
+		if (message.excludeFromContext) {
+			return "";
+		}
+
+		return `[Shell]\n$ ${message.command}\n${message.output}`;
 	}
 
 	if (message.role === "compactionSummary") {
@@ -275,36 +271,108 @@ export function isCompactionSummaryMessage(
 	return message.role === "compactionSummary";
 }
 
-export function getCompactionSummaryMessage(messages: AgentMessage[]) {
-	return messages.find(isCompactionSummaryMessage) ?? null;
+export function createCompactionSummaryMessage(
+	compaction: SessionCompactionState,
+) {
+	return {
+		role: "compactionSummary",
+		summary: compaction.summary,
+		timestamp: compaction.timestamp,
+		tokensBefore: compaction.tokensBefore,
+	} satisfies CompactionSummaryMessage;
 }
 
 export function getVisibleTranscriptMessages(messages: AgentMessage[]) {
 	return messages.filter((message) => !isCompactionSummaryMessage(message));
 }
 
-export function buildFullTranscriptMessages(options: {
-	archivedMessages: AgentMessage[];
-	messages: AgentMessage[];
-}) {
-	return [
-		...options.archivedMessages,
-		...getVisibleTranscriptMessages(options.messages),
-	];
+export function getEffectiveCompactionState(
+	compaction: SessionCompactionState | null | undefined,
+	messageCount: number,
+) {
+	if (!compaction) {
+		return null;
+	}
+
+	if (
+		compaction.firstKeptMessageIndex <= 0 ||
+		compaction.firstKeptMessageIndex >= messageCount
+	) {
+		return null;
+	}
+
+	return compaction;
 }
 
-export function createCompactionSummaryMessage(input: {
-	summary: string;
-	hiddenMessageCount: number;
-	archivedMessageCount: number;
+export function getCompactionBoundaryIndex(
+	compaction: SessionCompactionState | null | undefined,
+	messageCount: number,
+) {
+	const effectiveCompaction = getEffectiveCompactionState(
+		compaction,
+		messageCount,
+	);
+	if (!effectiveCompaction) {
+		return null;
+	}
+
+	const transcriptBoundaryIndex = effectiveCompaction.transcriptBoundaryIndex;
+	if (
+		typeof transcriptBoundaryIndex === "number" &&
+		transcriptBoundaryIndex > 0 &&
+		transcriptBoundaryIndex <= messageCount
+	) {
+		return transcriptBoundaryIndex;
+	}
+
+	return effectiveCompaction.firstKeptMessageIndex;
+}
+
+export function truncateCompactionState(
+	compaction: SessionCompactionState | null | undefined,
+	messageCount: number,
+) {
+	return getEffectiveCompactionState(compaction, messageCount);
+}
+
+export function buildRuntimeContextMessages(options: {
+	messages: AgentMessage[];
+	compaction: SessionCompactionState | null | undefined;
 }) {
-	return {
-		role: "compactionSummary",
-		summary: input.summary,
-		timestamp: Date.now(),
-		hiddenMessageCount: input.hiddenMessageCount,
-		archivedMessageCount: input.archivedMessageCount,
-	} satisfies CompactionSummaryMessage;
+	const compaction = getEffectiveCompactionState(
+		options.compaction,
+		options.messages.length,
+	);
+	if (!compaction) {
+		return options.messages.slice();
+	}
+
+	return [
+		createCompactionSummaryMessage(compaction),
+		...options.messages.slice(compaction.firstKeptMessageIndex),
+	] satisfies AgentMessage[];
+}
+
+export function buildTranscriptMessagesFromRuntime(options: {
+	transcriptMessages: AgentMessage[];
+	runtimeMessages: AgentMessage[];
+	compaction: SessionCompactionState | null | undefined;
+}) {
+	const visibleRuntimeMessages = getVisibleTranscriptMessages(
+		options.runtimeMessages,
+	);
+	const compaction = getEffectiveCompactionState(
+		options.compaction,
+		options.transcriptMessages.length,
+	);
+	if (!compaction) {
+		return visibleRuntimeMessages;
+	}
+
+	return [
+		...options.transcriptMessages.slice(0, compaction.firstKeptMessageIndex),
+		...visibleRuntimeMessages,
+	] satisfies AgentMessage[];
 }
 
 export async function compactSession(options: {
@@ -313,18 +381,22 @@ export async function compactSession(options: {
 		getApiKeyAsync(provider: string): Promise<string | undefined>;
 	};
 	sessionId: string;
-	visibleMessages: AgentMessage[];
-	archivedMessages: AgentMessage[];
+	transcriptMessages: AgentMessage[];
+	compaction: SessionCompactionState | null;
 	thinkingLevel: ThinkingLevel;
 }) {
-	const selection = selectTail(options.visibleMessages, options.model);
+	const currentCompaction = getEffectiveCompactionState(
+		options.compaction,
+		options.transcriptMessages.length,
+	);
+	const boundaryStart = currentCompaction?.firstKeptMessageIndex ?? 0;
+	const uncompressedMessages = options.transcriptMessages.slice(boundaryStart);
+	const selection = selectTail(uncompressedMessages, options.model);
 	if (!selection) {
 		return null;
 	}
 
-	const previousSummary = getCompactionSummaryMessage(
-		options.visibleMessages,
-	)?.summary;
+	const previousSummary = currentCompaction?.summary;
 	const prompt = buildPrompt(previousSummary, selection.hiddenMessages);
 	const apiKey = await options.authStorage.getApiKeyAsync(
 		options.model.provider,
@@ -360,24 +432,23 @@ export async function compactSession(options: {
 		throw new Error("Compaction produced an empty summary.");
 	}
 
-	const archivedMessages = [
-		...options.archivedMessages,
-		...selection.hiddenMessages,
-	];
-	const compactedMessages = [
-		createCompactionSummaryMessage({
-			summary,
-			hiddenMessageCount: selection.hiddenMessages.length,
-			archivedMessageCount: archivedMessages.length,
+	const firstKeptMessageIndex = boundaryStart + selection.hiddenMessages.length;
+	const tokensBefore = estimateContextTokens(
+		buildRuntimeContextMessages({
+			messages: options.transcriptMessages,
+			compaction: currentCompaction,
 		}),
-		...selection.tailMessages,
-	] satisfies AgentMessage[];
+	).tokens;
 
 	return {
 		summary,
-		archivedMessages,
-		compactedMessages,
+		compaction: {
+			summary,
+			firstKeptMessageIndex,
+			transcriptBoundaryIndex: options.transcriptMessages.length,
+			timestamp: Date.now(),
+			tokensBefore,
+		} satisfies SessionCompactionState,
 		hiddenMessageCount: selection.hiddenMessages.length,
-		archivedMessageCount: archivedMessages.length,
 	};
 }

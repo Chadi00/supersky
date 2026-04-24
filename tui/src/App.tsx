@@ -45,7 +45,9 @@ function AppContent({ projectLine, services, initialSessionId }: AppProps) {
 	const toast = useToast();
 	const {
 		state,
+		isCompacting,
 		visibleMessages,
+		visibleCompactionBoundaryIndex,
 		revertBannerState,
 		sessionSidebarUsage,
 		sessionSidebarModifiedFiles,
@@ -122,6 +124,7 @@ function AppContent({ projectLine, services, initialSessionId }: AppProps) {
 	const footerModelLabel = modelLabel
 		? `${modelLabel} · ${activeThinkingLevel}`
 		: null;
+	const footerActivityLabel = isCompacting ? "compacting" : null;
 	const focusComposer = useCallback(() => {
 		composerRef.current?.focus();
 	}, []);
@@ -221,6 +224,7 @@ function AppContent({ projectLine, services, initialSessionId }: AppProps) {
 						>
 							<MessageList
 								messages={visibleMessages}
+								compactionBoundaryIndex={visibleCompactionBoundaryIndex}
 								pendingBashMessages={state.pendingBashMessages}
 								pendingUserMessages={state.pendingUserMessages}
 								streamingMessage={state.streamingMessage}
@@ -281,7 +285,8 @@ function AppContent({ projectLine, services, initialSessionId }: AppProps) {
 
 			<AppFooter
 				isNewSession={isNewSession}
-				isRunning={state.isStreaming}
+				isRunning={state.isStreaming || isCompacting}
+				activityLabel={footerActivityLabel}
 				projectLine={projectLine}
 				modelName={footerModelLabel}
 				onMouseDown={focusComposer}

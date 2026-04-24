@@ -6,6 +6,7 @@ import type { AgentRuntimeLike } from "../agent/runtime";
 import { buildSystemPrompt } from "../agent/systemPrompt";
 import { createBuiltInTools } from "../agent/tools";
 import type { EditorPreset } from "../app/editor";
+import type { SessionCompactionState } from "../session/compaction";
 import type {
 	AuthCredential,
 	AuthStorageLike,
@@ -452,6 +453,7 @@ class FakeSessionStore implements SessionStoreLike {
 			thinkingLevel: input.thinkingLevel ?? "medium",
 			revert: null,
 			archivedMessages: [],
+			compaction: null,
 			messages: [],
 		};
 		this.sessions.set(input.id, session);
@@ -502,6 +504,16 @@ class FakeSessionStore implements SessionStoreLike {
 		const session = this.sessions.get(sessionId);
 		if (!session) return;
 		session.archivedMessages = messages;
+		session.updatedAt = Date.now();
+	}
+
+	replaceSessionCompaction(
+		sessionId: string,
+		compaction: SessionCompactionState | null,
+	) {
+		const session = this.sessions.get(sessionId);
+		if (!session) return;
+		session.compaction = compaction;
 		session.updatedAt = Date.now();
 	}
 

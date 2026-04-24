@@ -3,7 +3,10 @@ import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { convertSuperskyAgentMessagesToLlm } from "./agent/bashExecutionTypes";
 import type { AgentRuntimeLike } from "./agent/runtime";
+import { buildSystemPrompt } from "./agent/systemPrompt";
+import { createBuiltInTools } from "./agent/tools";
 import * as userShell from "./agent/userShell";
 import * as clipboard from "./app/clipboard";
 import * as editorApp from "./app/editor";
@@ -12,6 +15,7 @@ import * as compaction from "./session/compaction";
 import { SIDEBAR_LAYOUT_WIDTH } from "./session/layout";
 import { getUserMessageRowId } from "./session/MessageList";
 import * as browser from "./session/providerState/browser";
+import type { Api, Model } from "./session/providerState/piSource";
 import type { SessionServices } from "./session/providerState/services";
 import { appLifecycle } from "./shared/lifecycle";
 import {
@@ -43,12 +47,20 @@ import {
 	withApp,
 } from "./test/appTestUtils";
 import { createFakeSessionServices } from "./test/fakeSessionServices";
-import type { AgentMessage } from "./vendor/pi-agent-core/index.js";
+import { Agent, type AgentMessage } from "./vendor/pi-agent-core/index.js";
+import type { ThinkingLevel } from "./vendor/pi-agent-core/types.js";
+import {
+	createAssistantMessageEventStream,
+	type Message,
+} from "./vendor/pi-ai/index.js";
 
-function createDelayedRuntime(sessionId: string): AgentRuntimeLike {
+function createDelayedRuntime(
+	sessionId: string,
+	model: Model<Api> | null,
+): AgentRuntimeLike {
 	let resolvePrompt: (() => void) | null = null;
 	const state = {
-		model: null as unknown,
+		model,
 		messages: [] as AgentMessage[],
 		streamingMessage: null,
 		isStreaming: false,
@@ -61,7 +73,7 @@ function createDelayedRuntime(sessionId: string): AgentRuntimeLike {
 		cwd: process.cwd(),
 		toolDefinitions: {} as AgentRuntimeLike["toolDefinitions"],
 		setModel(model) {
-			state.model = model as unknown;
+			state.model = model;
 		},
 		setThinkingLevel() {},
 		reset() {
@@ -88,6 +100,94 @@ function createDelayedRuntime(sessionId: string): AgentRuntimeLike {
 	};
 }
 
+function createRecordingRuntime(options: {
+	sessionId: string;
+	model: Model<Api>;
+	recordedContexts: Message[][];
+	initialMessages?: AgentMessage[];
+	thinkingLevel?: ThinkingLevel;
+}): AgentRuntimeLike {
+	const tools = createBuiltInTools(process.cwd());
+	const agent = new Agent({
+		initialState: {
+			systemPrompt: buildSystemPrompt({
+				cwd: process.cwd(),
+				date: "2026-04-22",
+				tools: Object.values(tools.definitions),
+			}),
+			model: options.model,
+			messages: options.initialMessages ?? [],
+			thinkingLevel: options.thinkingLevel ?? "medium",
+			tools: tools.active,
+		},
+		convertToLlm: convertSuperskyAgentMessagesToLlm,
+		sessionId: options.sessionId,
+		streamFn: async (runtimeModel, context) => {
+			options.recordedContexts.push(structuredClone(context.messages));
+			const stream = createAssistantMessageEventStream();
+			queueMicrotask(() => {
+				stream.push({
+					type: "done",
+					reason: "stop",
+					message: {
+						role: "assistant",
+						content: [{ type: "text", text: "Handled request." }],
+						api: runtimeModel.api,
+						provider: runtimeModel.provider,
+						model: runtimeModel.id,
+						usage: {
+							input: 0,
+							output: 0,
+							cacheRead: 0,
+							cacheWrite: 0,
+							totalTokens: 0,
+							cost: {
+								input: 0,
+								output: 0,
+								cacheRead: 0,
+								cacheWrite: 0,
+								total: 0,
+							},
+						},
+						stopReason: "stop",
+						timestamp: Date.now(),
+					},
+				});
+			});
+			return stream;
+		},
+	});
+
+	return {
+		agent,
+		sessionId: options.sessionId,
+		cwd: process.cwd(),
+		toolDefinitions: tools.definitions,
+		setModel(model) {
+			agent.state.model = model;
+		},
+		setThinkingLevel(level) {
+			agent.state.thinkingLevel = level;
+		},
+		reset() {
+			agent.reset();
+		},
+		prompt(input: string | AgentMessage | AgentMessage[]) {
+			if (typeof input === "string") {
+				return agent.prompt(input);
+			}
+
+			return agent.prompt(input);
+		},
+		abort() {
+			agent.abort();
+		},
+		subscribe(listener) {
+			return agent.subscribe(listener);
+		},
+	};
+}
+
 function slashCommandRowId(commandName: string) {
 	return `slash-command-item-${commandName}`;
 }
@@ -100,6 +200,26 @@ function createStoredSessionMessages(text: string): AgentMessage[] {
 			timestamp: 1,
 		},
 	];
+}
+
+function createTestModel(): Model<Api> {
+	return {
+		id: "test-model",
+		name: "Test Model",
+		api: "openai-responses",
+		provider: "test",
+		baseUrl: "https://example.test",
+		reasoning: true,
+		input: ["text"],
+		cost: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+		},
+		contextWindow: 200000,
+		maxTokens: 16384,
+	};
 }
 
 function expectRowsLeftAligned(root: unknown, ...rowIds: string[]) {
@@ -526,10 +646,15 @@ test("typing slash opens the command menu", async () => {
 });
 
 test("submitting from the welcome screen switches to the session view immediately", async () => {
+	const sharedServices = createFakeSessionServices();
+	sharedServices.authStorage.set("anthropic", {
+		type: "api_key",
+		key: "test-api-key",
+	});
 	const services: SessionServices = {
-		...createFakeSessionServices(),
-		createRuntime: (_model, options) =>
-			createDelayedRuntime(options?.sessionId ?? "delayed-session"),
+		...sharedServices,
+		createRuntime: (model, options) =>
+			createDelayedRuntime(options?.sessionId ?? "delayed-session", model),
 	};
 
 	await withApp(
@@ -547,6 +672,7 @@ test("submitting from the welcome screen switches to the session view immediatel
 
 			expect(frame).toContain("hello from welcome");
 			expect(frame).toContain("Working...");
+			expect(frame).toContain("5 tokens");
 			expect(frame).toContain("⢀⠀ ~/projects/supersky:main");
 			expect(frame).not.toContain("Handled request.");
 		},
@@ -1139,21 +1265,27 @@ test("cancelling /export confirm dialog does not write a file", async () => {
 	}
 });
 
-test("submitting /compact replaces the active transcript with a compacted summary", async () => {
-	const compactSpy = spyOn(compaction, "compactSession").mockResolvedValue({
+test("submitting /compact keeps the compacted summary out of the visible transcript", async () => {
+	const compactResult = {
 		summary: "## Goal\n- Ship the feature",
-		archivedMessages: createStoredSessionMessages("old context"),
-		compactedMessages: [
-			compaction.createCompactionSummaryMessage({
-				summary: "## Goal\n- Ship the feature",
-				hiddenMessageCount: 2,
-				archivedMessageCount: 2,
+		compaction: {
+			summary: "## Goal\n- Ship the feature",
+			firstKeptMessageIndex: 1,
+			transcriptBoundaryIndex: 2,
+			timestamp: 10,
+			tokensBefore: 123,
+		},
+		hiddenMessageCount: 1,
+	};
+	let resolveCompact:
+		| ((value: Awaited<ReturnType<typeof compaction.compactSession>>) => void)
+		| null = null;
+	const compactSpy = spyOn(compaction, "compactSession").mockImplementation(
+		() =>
+			new Promise((resolve) => {
+				resolveCompact = resolve;
 			}),
-			...createStoredSessionMessages("recent context"),
-		],
-		hiddenMessageCount: 2,
-		archivedMessageCount: 2,
-	});
+	);
 
 	try {
 		const sharedServices = createFakeSessionServices();
@@ -1164,6 +1296,15 @@ test("submitting /compact replaces the active transcript with a compacted summar
 				await submitText(setup, "/compact");
 				await settleScrollLayout(setup);
 
+				expect(setup.captureCharFrame()).toContain("compacting");
+
+				if (!resolveCompact) {
+					throw new Error("Expected compaction request");
+				}
+				resolveCompact(compactResult);
+				await settleScrollLayout(setup);
+				await settleScrollLayout(setup);
+
 				const sessionId = getCurrentSessionId(sharedServices);
 				if (!sessionId) {
 					throw new Error("Expected active session");
@@ -1171,12 +1312,24 @@ test("submitting /compact replaces the active transcript with a compacted summar
 
 				const frame = setup.captureCharFrame();
 				const stored = sharedServices.sessionStore.getSession(sessionId);
+				const compactionIndex = frame.indexOf("Compaction");
+				const messageIndex = frame.lastIndexOf("Handled request.");
 
-				expect(frame).toContain("Session compacted");
-				expect(frame).toContain("Summarized 2 messages.");
-				expect(stored?.archivedMessages).toHaveLength(1);
-				expect(stored?.messages[0]).toMatchObject({
-					role: "compactionSummary",
+				expect(frame).toContain("Session compacted.");
+				expect(frame).toContain("Compaction");
+				expect(frame).not.toContain("compacting");
+				expect(frame).not.toContain("Ship the feature");
+				expect(compactionIndex).toBeGreaterThan(messageIndex);
+				expect(stored?.messages).toHaveLength(2);
+				expect(
+					stored?.messages.some(
+						(message) => message.role === "compactionSummary",
+					),
+				).toBe(false);
+				expect(stored?.compaction).toMatchObject({
+					summary: "## Goal\n- Ship the feature",
+					firstKeptMessageIndex: 1,
+					transcriptBoundaryIndex: 2,
 				});
 			},
 			undefined,
@@ -1186,6 +1339,210 @@ test("submitting /compact replaces the active transcript with a compacted summar
 	} finally {
 		compactSpy.mockRestore();
 	}
+});
+
+test("prompts after /compact send the compacted context", async () => {
+	const recordedContexts: Message[][] = [];
+	const compactResult = {
+		summary: "## Goal\n- Ship the feature",
+		compaction: {
+			summary: "## Goal\n- Ship the feature",
+			firstKeptMessageIndex: 2,
+			timestamp: 10,
+			tokensBefore: 123,
+		},
+		hiddenMessageCount: 2,
+	};
+	const sharedServices = createFakeSessionServices();
+	const fallbackModel = createTestModel();
+	const services: SessionServices = {
+		...sharedServices,
+		createRuntime: (model, options) =>
+			createRecordingRuntime({
+				sessionId: options?.sessionId ?? "recording-session",
+				model: model ?? fallbackModel,
+				recordedContexts,
+				initialMessages: options?.initialMessages,
+				thinkingLevel: options?.thinkingLevel,
+			}),
+	};
+	const compactSpy = spyOn(compaction, "compactSession").mockResolvedValue(
+		compactResult,
+	);
+
+	try {
+		await withApp(
+			async (setup) => {
+				await sendMessages(setup, 2);
+				await settleScrollLayout(setup);
+				await submitText(setup, "/compact");
+				await settleScrollLayout(setup);
+				await submitText(setup, "after compact");
+				await settleScrollLayout(setup);
+
+				const finalContext = recordedContexts.at(-1);
+				const compactedMessage = finalContext?.[0];
+				expect(finalContext).toBeDefined();
+				expect(compactedMessage).toMatchObject({ role: "user" });
+				expect(
+					Array.isArray(compactedMessage?.content) &&
+						compactedMessage.content[0]?.type === "text" &&
+						compactedMessage.content[0].text.includes(
+							"The conversation history before this point was compacted",
+						),
+				).toBe(true);
+				expect(
+					Array.isArray(compactedMessage?.content) &&
+						compactedMessage.content[0]?.type === "text" &&
+						compactedMessage.content[0].text.includes(
+							"## Goal\n- Ship the feature",
+						),
+				).toBe(true);
+				expect(
+					finalContext?.some(
+						(message) =>
+							message.role === "user" &&
+							Array.isArray(message.content) &&
+							message.content.some(
+								(part) => part.type === "text" && part.text === "message 0",
+							),
+					),
+				).toBe(false);
+				expect(
+					finalContext?.some(
+						(message) =>
+							message.role === "user" &&
+							Array.isArray(message.content) &&
+							message.content.some(
+								(part) => part.type === "text" && part.text === "message 1",
+							),
+					),
+				).toBe(true);
+			},
+			undefined,
+			undefined,
+			services,
+		);
+	} finally {
+		compactSpy.mockRestore();
+	}
+});
+
+test("compacted API context still omits excluded shell output in the kept tail", async () => {
+	const recordedContexts: Message[][] = [];
+	const secretOutput = "token=shh-123";
+	const sharedServices = createFakeSessionServices();
+	const fallbackModel = createTestModel();
+	const sessionId = "compacted-session";
+	sharedServices.sessionStore.createSession({
+		id: sessionId,
+		title: "Compacted",
+		workspaceRoot: sharedServices.workspaceRoot,
+		model: fallbackModel,
+	});
+	sharedServices.sessionStore.replaceSessionMessages(sessionId, [
+		{
+			role: "user",
+			content: [{ type: "text", text: "message 0" }],
+			timestamp: 1,
+		},
+		{
+			role: "assistant",
+			content: [{ type: "text", text: "Handled request." }],
+			api: fallbackModel.api,
+			provider: fallbackModel.provider,
+			model: fallbackModel.id,
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					total: 0,
+				},
+			},
+			stopReason: "stop",
+			timestamp: 2,
+		},
+		{
+			role: "user",
+			content: [{ type: "text", text: "message 1" }],
+			timestamp: 3,
+		},
+		{
+			role: "bashExecution",
+			command: "print-secret",
+			output: secretOutput,
+			exitCode: 0,
+			cancelled: false,
+			truncated: false,
+			timestamp: 4,
+			excludeFromContext: true,
+		},
+		{
+			role: "assistant",
+			content: [{ type: "text", text: "Recent answer." }],
+			api: fallbackModel.api,
+			provider: fallbackModel.provider,
+			model: fallbackModel.id,
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					total: 0,
+				},
+			},
+			stopReason: "stop",
+			timestamp: 5,
+		},
+	]);
+	sharedServices.sessionStore.replaceSessionCompaction(sessionId, {
+		summary: "## Goal\n- Ship the feature",
+		firstKeptMessageIndex: 2,
+		timestamp: 10,
+		tokensBefore: 123,
+	});
+	const services: SessionServices = {
+		...sharedServices,
+		createRuntime: (model, options) =>
+			createRecordingRuntime({
+				sessionId: options?.sessionId ?? sessionId,
+				model: model ?? fallbackModel,
+				recordedContexts,
+				initialMessages: options?.initialMessages,
+				thinkingLevel: options?.thinkingLevel,
+			}),
+	};
+
+	await withApp(
+		async (setup) => {
+			await submitText(setup, "after compact");
+			await settleScrollLayout(setup);
+
+			const finalContext = recordedContexts.at(-1);
+			expect(finalContext).toBeDefined();
+			expect(JSON.stringify(finalContext)).toContain("## Goal\\n- Ship the feature");
+			expect(JSON.stringify(finalContext)).toContain("message 1");
+			expect(JSON.stringify(finalContext)).not.toContain("print-secret");
+			expect(JSON.stringify(finalContext)).not.toContain(secretOutput);
+		},
+		undefined,
+		undefined,
+		services,
+		{ initialSessionId: sessionId },
+	);
 });
 
 test("the session picker can copy the current session id", async () => {

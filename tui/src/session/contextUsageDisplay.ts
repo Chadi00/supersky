@@ -3,6 +3,10 @@
  * (packages/coding-agent/src/modes/interactive/components/footer.ts and
  * packages/coding-agent/src/core/compaction/compaction.ts).
  */
+import {
+	bashExecutionToText,
+	compactionSummaryToText,
+} from "../agent/bashExecutionTypes";
 import type { AgentMessage } from "../vendor/pi-agent-core/index.js";
 import type { AssistantMessage, Usage } from "../vendor/pi-ai/index.js";
 import type { Api, Model } from "./providerState/piSource";
@@ -24,13 +28,17 @@ export function calculateContextTokens(usage: Usage): number {
 	);
 }
 
+function hasMeaningfulUsage(usage: Usage | null | undefined) {
+	return Boolean(usage && calculateContextTokens(usage) > 0);
+}
+
 function getAssistantUsage(msg: AgentMessage): Usage | undefined {
 	if (msg.role === "assistant" && "usage" in msg) {
 		const assistantMsg = msg as AssistantMessage;
 		if (
 			assistantMsg.stopReason !== "aborted" &&
 			assistantMsg.stopReason !== "error" &&
-			assistantMsg.usage
+			hasMeaningfulUsage(assistantMsg.usage)
 		) {
 			return assistantMsg.usage;
 		}
@@ -112,11 +120,17 @@ export function estimateTokens(message: AgentMessage): number {
 		if (m.excludeFromContext) {
 			return 0;
 		}
-		chars = String(m.command).length + String(m.output).length;
+		chars = bashExecutionToText(
+			message as Extract<AgentMessage, { role: "bashExecution" }>,
+		).length;
 		return Math.ceil(chars / 4);
 	}
-	if (role === "branchSummary" || role === "compactionSummary") {
+	if (role === "branchSummary") {
 		chars = String(m.summary).length;
+		return Math.ceil(chars / 4);
+	}
+	if (role === "compactionSummary") {
+		chars = compactionSummaryToText(String(m.summary)).length;
 		return Math.ceil(chars / 4);
 	}
 	return 0;
@@ -124,14 +138,27 @@ export function estimateTokens(message: AgentMessage): number {
 
 function getLastAssistantUsageInfo(
 	messages: AgentMessage[],
-): { usage: Usage; index: number } | undefined {
+): { usage: Usage; index: number; timestamp: number } | undefined {
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const entry = messages[i];
 		if (!entry) continue;
 		const usage = getAssistantUsage(entry);
-		if (usage) return { usage, index: i };
+		if (usage) {
+			return { usage, index: i, timestamp: entry.timestamp };
+		}
 	}
 	return undefined;
+}
+
+function hasStaleCompactionUsage(
+	messages: AgentMessage[],
+	usageTimestamp: number,
+) {
+	return messages.some(
+		(message) =>
+			message.role === "compactionSummary" &&
+			message.timestamp > usageTimestamp,
+	);
 }
 
 /**
@@ -142,7 +169,7 @@ export function estimateContextTokens(
 ): ContextUsageEstimate {
 	const usageInfo = getLastAssistantUsageInfo(messages);
 
-	if (!usageInfo) {
+	if (!usageInfo || hasStaleCompactionUsage(messages, usageInfo.timestamp)) {
 		let estimated = 0;
 		for (const message of messages) {
 			estimated += estimateTokens(message);
@@ -198,24 +225,18 @@ export interface ContextUsage {
 }
 
 /**
- * Current context window usage for the active model (no compaction, unlike full pi-mono
- * `AgentSession#getContextUsage` — supersky has no session compaction).
+ * Current context window usage for the active model, including compacted summaries.
  */
 export function getContextUsage(
 	model: Model<Api> | null | undefined,
 	messages: AgentMessage[],
-	streaming: AssistantMessage | null,
 ): ContextUsage | undefined {
 	if (!model) return undefined;
 
 	const contextWindow = model.contextWindow ?? 0;
 	if (contextWindow <= 0) return undefined;
 
-	const combined: AgentMessage[] = streaming
-		? [...messages, streaming as AgentMessage]
-		: messages;
-
-	const estimate = estimateContextTokens(combined);
+	const estimate = estimateContextTokens(messages);
 	const percent = (estimate.tokens / contextWindow) * 100;
 
 	return {
@@ -230,12 +251,13 @@ export function getContextUsage(
  */
 export function buildSessionSidebarUsageLines(
 	model: Model<Api> | null | undefined,
-	messages: AgentMessage[],
+	contextMessages: AgentMessage[],
+	costMessages: AgentMessage[],
 	streaming: AssistantMessage | null,
 	isUsingSubscription: boolean,
 ): string[] {
-	const contextUsage = getContextUsage(model, messages, streaming);
-	const cost = sumCostFromTranscript(messages, streaming);
+	const contextUsage = getContextUsage(model, contextMessages);
+	const cost = sumCostFromTranscript(costMessages, streaming);
 
 	if (!contextUsage) {
 		return [
