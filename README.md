@@ -1,14 +1,12 @@
 # Supersky
 
-**Supersky** is a small coding-agent harness (short system prompt, four tools: `read`, `edit`, `write`, `bash`) plus a fullscreen terminal UI on [OpenTUI](https://opentui.com) — the same TUI stack OpenCode uses. It takes cues from [pi.dev](https://pi.dev): a tight agent core, with sessions, slash commands, and keyboard shortcuts in the shell around it.
+A minimal coding-agent harness in the terminal: a short system prompt, four tools (`read`, `edit`, `write`, `bash`), and a fullscreen [OpenTUI](https://opentui.com) UI. Sessions, slash commands, and keyboard shortcuts wrap the same kind of tight agent core you see in projects like [pi.dev](https://pi.dev).
 
-![Supersky new session screen: pixel title, composer bar, and status line](docs/new-session-screen.png)
+![Supersky new session: banner, composer, and status](docs/new-session-screen.png)
 
----
+## Quick start
 
-## Run it
-
-From the `tui` package:
+**Requires [Bun](https://bun.sh).**
 
 ```bash
 cd tui
@@ -17,30 +15,16 @@ chmod +x bin/supersky
 bun link
 ```
 
-Run **`supersky`** from any project directory to open the UI with that folder as the working tree.
+From any project directory, run **`supersky`** to open the UI with that folder as the working tree.
 
-Development:
-
-```bash
-bun run dev      # dev entry
-bun run test     # tests
-bun run check    # lint + typecheck + test
-```
-
----
-
-## Using the UI
-
-Run **`/hotkey`** in the composer to see keyboard shortcuts. Type **`exit`** and press Enter to quit.
-
----
+Use **`/login`** in the composer to connect a model provider, then ask for help with your code. Type **`/hotkey`** to see shortcuts, or run **`exit`** and press **Enter** to quit.
 
 ## Slash commands
 
-Prefix with `/` in the composer (or pick from the menu):
+Prefix with `/` in the composer (or open the command menu):
 
-| Command | What it does |
-|---------|----------------|
+| Command | Description |
+|--------|-------------|
 | `/login` | Connect a provider |
 | `/logout` | Disconnect a provider |
 | `/model` | Change model |
@@ -57,4 +41,13 @@ Prefix with `/` in the composer (or pick from the menu):
 | `/editor` | Open the project in your editor |
 | `/exit` | Quit |
 
-More detail for contributors: [`tui/README.md`](tui/README.md).
+## Development
+
+```bash
+cd tui
+bun run dev      # watch mode
+bun run test
+bun run check    # lint, typecheck, and test
+```
+
+Contributor-focused details: [`tui/README.md`](tui/README.md).

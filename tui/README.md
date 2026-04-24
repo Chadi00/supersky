@@ -1,59 +1,63 @@
 # Supersky TUI
 
-Minimal fullscreen OpenTUI shell for the `supersky` project.
+Fullscreen [OpenTUI](https://opentui.com) shell for the Supersky agent. Built with [Bun](https://bun.sh) and the OpenTUI React reconciler.
 
-## Commands
+## Setup
 
 ```bash
 bun install
 chmod +x bin/supersky
 bun link
-bun run dev
-bun run format
-bun run lint
-bun run test
-bun run typecheck
-bun run check
 ```
 
-After linking, run `supersky` from any project directory to open the TUI there.
+After `bun link`, run `supersky` from any project directory; that directory becomes the agent working tree.
 
-## Controls
+## Scripts
 
-```text
-Enter                     Submit the current prompt
-Shift+Enter / Linefeed    Insert a newline in the composer
-Up / Down                 Move lines first, then recall at top/bottom start/end
-Ctrl+C                    Exit cleanly
-Ctrl+N                    Reset back to a new session
-exit + Enter              Exit cleanly from the composer
-```
+| Script | What it runs |
+|--------|----------------|
+| `bun run start` | Run `src/index.tsx` once |
+| `bun run dev` | Watch mode (`bun run --watch src/index.tsx`) |
+| `bun run build` | Bundle to `dist/` (Bun target) |
+| `bun run test` | Test suite |
+| `bun run lint` | Biome check |
+| `bun run format` | Biome check with write |
+| `bun run typecheck` | `tsc --noEmit` |
+| `bun run check` | `lint` → `typecheck` → `test` |
 
-`Esc` is still wired as an exit shortcut in the runtime app, but the current OpenTUI test renderer does not emit an escape event, so that path is not part of the automated suite.
+## Keyboard shortcuts
 
-## Architecture
+Composer and global shortcuts (use **`/hotkey`** in the app for the live list):
+
+| Shortcut | Action |
+|----------|--------|
+| **Enter** | Send the current prompt |
+| **Shift+Enter** / linefeed | New line in the composer |
+| **Up** / **Down** | Move lines, then browse composer history at top/bottom |
+| **/** | Open slash commands |
+| **!** | Run a shell command (with context) |
+| **!!** | Run a shell command without context |
+| **Esc** | Close dialog or cancel shell / streaming |
+| **Ctrl+N** | New session |
+| **Ctrl+C** | Quit |
+| **Ctrl+D** / **Ctrl+R** / **Ctrl+K** | In `/sessions`: delete, rename, or copy session id |
+| `exit` + **Enter** | Quit from the composer |
+
+`Esc` is also wired in the app; the OpenTUI test renderer may not emit escape events, so that path is not fully covered in automated tests.
+
+## Layout
 
 ```text
 src/
-  App.tsx                 Thin composition root
-  app/                    App chrome and static shell config
-  session/                Session reducer, controller, layout, and UI pieces
-  shared/                 Cross-cutting helpers (theme, time, lifecycle)
-  test/                   Reusable TUI test helpers
+  App.tsx                 Composition root
+  app/                    Chrome, config, hotkeys, launch
+  session/                Session state, UI, commands, provider wiring
+  agent/                  Tools, runtime, system prompt
+  shared/                 Theme, time, lifecycle helpers
+  test/                   TUI test utilities
+  vendor/                 Vendored agent / provider code
 ```
 
-## Test Coverage
+## Tests
 
-The suite covers the current visible behavior and the pure helper modules:
-
-- initial shell render
-- prompt submission
-- `exit` command handling
-- multiline drafting and submission layout
-- composer history recall with `Up` / `Down`
-- `Ctrl+C` exit and `Ctrl+N` reset
-- wide vs narrow sidebar behavior
-- hidden scrollbars and footer anchoring under overflow
-- command parsing, reducer transitions, layout breakpoints, and timestamp formatting
-
-Built with Bun and the OpenTUI React reconciler.
+The suite covers visible TUI behavior and pure helpers, including: initial render, prompt submission, `exit`, multiline compose/recall, history, **Ctrl+C** / **Ctrl+N**, sidebar width, scroll/overflow, command parsing, reducer transitions, and timestamp formatting.
